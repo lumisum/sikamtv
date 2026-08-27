@@ -38,4 +38,30 @@ final class BackgroundTimelineTests: XCTestCase {
 
         XCTAssertEqual(video.playbackTime(for: timeline?.currentLocalTime ?? 0), 6.5, accuracy: 0.001)
     }
+
+    func testSingleVideoCrossfadesItsEndIntoItsBeginning() {
+        let state = BackgroundTimeline.state(
+            at: 11.5,
+            duration: 60,
+            itemCount: 1,
+            transition: .none,
+            transitionDuration: 1,
+            singleVideoDuration: 12
+        )
+
+        XCTAssertEqual(state?.currentIndex, 0)
+        XCTAssertEqual(state?.nextIndex, 0)
+        XCTAssertEqual(state?.currentLocalTime ?? 0, 11.5, accuracy: 0.001)
+        XCTAssertEqual(state?.nextLocalTime ?? 0, 0.5, accuracy: 0.001)
+        XCTAssertEqual(state?.transitionProgress ?? 0, 0.5, accuracy: 0.001)
+    }
+
+    func testSingleVideoContinuesFromTheCompletedBlendAfterLooping() {
+        let beforeLoop = BackgroundTimeline.state(at: 11.999, duration: 60, itemCount: 1, transition: .none, transitionDuration: 1, singleVideoDuration: 12)
+        let afterLoop = BackgroundTimeline.state(at: 12, duration: 60, itemCount: 1, transition: .none, transitionDuration: 1, singleVideoDuration: 12)
+
+        XCTAssertEqual(beforeLoop?.nextLocalTime ?? 0, 0.999, accuracy: 0.002)
+        XCTAssertNil(afterLoop?.nextIndex)
+        XCTAssertEqual(afterLoop?.currentLocalTime ?? 0, 1, accuracy: 0.001)
+    }
 }

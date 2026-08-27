@@ -319,13 +319,23 @@ struct SettingsPanel: View {
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 Label("背景轮播", systemImage: "rectangle.2.swap").font(.headline)
-                Picker("切换动画", selection: $workspace.settings.backgroundTransition) {
-                    ForEach(BackgroundTransition.allCases) { Text($0.rawValue).tag($0) }
+                let singleVideo = workspace.backgrounds.count == 1 && workspace.backgrounds.first?.kind == .video
+                if singleVideo {
+                    LabeledContent("循环动画", value: "自动淡入淡出")
+                } else {
+                    Picker("切换动画", selection: $workspace.settings.backgroundTransition) {
+                        ForEach(BackgroundTransition.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .disabled(workspace.backgrounds.count < 2)
                 }
-                .disabled(workspace.backgrounds.count < 2)
                 SliderRow(title: "过渡时长", value: $workspace.settings.backgroundTransitionDuration, range: 0.2...2.5, precision: 1, suffix: " s")
-                    .disabled(workspace.backgrounds.count < 2 || workspace.settings.backgroundTransition == .none)
-                if let segmentDuration = workspace.backgroundSegmentDuration {
+                    .disabled(!singleVideo && (workspace.backgrounds.count < 2 || workspace.settings.backgroundTransition == .none))
+                if singleVideo {
+                    Text("视频循环处会自动融合末尾与开头画面，减少重复播放的跳切感。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let segmentDuration = workspace.backgroundSegmentDuration {
                     Text("已按音乐时长自动等分：每个背景约 \(formatDuration(segmentDuration)) 后切换。")
                         .font(.caption2)
                         .foregroundStyle(.secondary)

@@ -75,7 +75,14 @@ final class VideoExporter: @unchecked Sendable {
             try autoreleasepool {
                 while !videoInput.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.002) }
                 let time = Double(frame) / fps
-                let timeline = BackgroundTimeline.state(at: time, duration: duration, itemCount: backgrounds.count, transition: settings.backgroundTransition, transitionDuration: settings.backgroundTransitionDuration)
+                let timeline = BackgroundTimeline.state(
+                    at: time,
+                    duration: duration,
+                    itemCount: backgrounds.count,
+                    transition: settings.backgroundTransition,
+                    transitionDuration: settings.backgroundTransitionDuration,
+                    singleVideoDuration: backgrounds.count == 1 && backgrounds[0].kind == .video ? backgrounds[0].duration : nil
+                )
                 let currentMedia = timeline.map { backgrounds[$0.currentIndex] }
                 let nextMedia = timeline?.nextIndex.map { backgrounds[$0] }
                 let frameImage = image(for: currentMedia, at: timeline?.currentLocalTime ?? time)

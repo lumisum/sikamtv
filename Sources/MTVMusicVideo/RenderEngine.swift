@@ -77,7 +77,8 @@ final class RenderEngine {
         context.saveGState()
         context.clip(to: CGRect(origin: .zero, size: size))
         if let next, state.nextIndex != nil {
-            switch settings.backgroundTransition {
+            let transition: BackgroundTransition = state.nextIndex == state.currentIndex ? .crossfade : settings.backgroundTransition
+            switch transition {
             case .crossfade:
                 drawBackgroundLayer(image, identifier: identifier, mediaDuration: mediaDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1, in: context, size: size, settings: settings)
                 drawBackgroundLayer(next, identifier: nextIdentifier, mediaDuration: nextMediaDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: progress, offsetX: 0, extraZoom: 1, in: context, size: size, settings: settings)

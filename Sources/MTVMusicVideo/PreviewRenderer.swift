@@ -42,7 +42,8 @@ final class PreviewRenderer: @unchecked Sendable {
                 duration: snapshot.projectDuration,
                 itemCount: snapshot.backgrounds.count,
                 transition: snapshot.settings.backgroundTransition,
-                transitionDuration: snapshot.settings.backgroundTransitionDuration
+                transitionDuration: snapshot.settings.backgroundTransitionDuration,
+                singleVideoDuration: snapshot.backgrounds.count == 1 && snapshot.backgrounds[0].kind == .video ? snapshot.backgrounds[0].duration : nil
             )
             let currentMedia = timeline.map { snapshot.backgrounds[$0.currentIndex] }
             let nextMedia = timeline?.nextIndex.map { snapshot.backgrounds[$0] }

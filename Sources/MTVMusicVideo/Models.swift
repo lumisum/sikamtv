@@ -61,8 +61,11 @@ struct BackgroundTimelineState: Equatable, Sendable {
 }
 
 enum BackgroundTimeline {
-    static func state(at time: Double, duration: Double, itemCount: Int, transition: BackgroundTransition, transitionDuration: Double) -> BackgroundTimelineState? {
+    static func state(at time: Double, duration: Double, itemCount: Int, transition: BackgroundTransition, transitionDuration: Double, singleVideoDuration: Double? = nil) -> BackgroundTimelineState? {
         guard itemCount > 0 else { return nil }
+        if itemCount == 1, let videoDuration = singleVideoDuration, videoDuration > 0 {
+            return singleVideoState(at: time, videoDuration: videoDuration, transitionDuration: transitionDuration)
+        }
         guard itemCount > 1, duration > 0 else {
             return BackgroundTimelineState(currentIndex: 0, nextIndex: nil, currentLocalTime: max(0, time), nextLocalTime: 0, segmentDuration: max(duration, 1), transitionProgress: 0)
         }
@@ -83,6 +86,34 @@ enum BackgroundTimeline {
             )
         }
         return BackgroundTimelineState(currentIndex: activeIndex, nextIndex: nil, currentLocalTime: localTime, nextLocalTime: 0, segmentDuration: segmentDuration, transitionProgress: 0)
+    }
+
+    private static func singleVideoState(at time: Double, videoDuration: Double, transitionDuration: Double) -> BackgroundTimelineState {
+        let safeTime = max(0, time)
+        let blendDuration = min(max(0.2, transitionDuration), videoDuration * 0.25)
+        let cycleDuration = max(0.001, videoDuration - blendDuration)
+        let playhead: Double
+        if safeTime < videoDuration {
+            playhead = safeTime
+        } else {
+            // After the first pass, each cycle resumes where the incoming blend
+            // finished instead of jumping back to the video's first frame.
+            playhead = (safeTime - videoDuration).truncatingRemainder(dividingBy: cycleDuration) + blendDuration
+        }
+
+        let blendStart = videoDuration - blendDuration
+        if playhead >= blendStart {
+            let progress = min(1, max(0, (playhead - blendStart) / blendDuration))
+            return BackgroundTimelineState(
+                currentIndex: 0,
+                nextIndex: 0,
+                currentLocalTime: playhead,
+                nextLocalTime: progress * blendDuration,
+                segmentDuration: videoDuration,
+                transitionProgress: progress
+            )
+        }
+        return BackgroundTimelineState(currentIndex: 0, nextIndex: nil, currentLocalTime: playhead, nextLocalTime: 0, segmentDuration: videoDuration, transitionProgress: 0)
     }
 }
 
