@@ -40,7 +40,7 @@ final class VideoExporterTests: XCTestCase {
         settings.backgroundTransition = .crossfade
         settings.backgroundTransitionDuration = 0.1
         let lyrics = [LRCLine(time: 0, text: "SikaMTV 导出测试")]
-        var progressValues: [Double] = []
+        let progressValues = LockedProgress()
         try VideoExporter().export(
             to: outputURL,
             backgrounds: [
@@ -106,6 +106,145 @@ final class VideoExporterTests: XCTestCase {
         XCTAssertNotNil(pool.image(for: videoURL, at: 0.1, role: 0))
         XCTAssertNotNil(pool.image(for: videoURL, at: 0.2, role: 0))
         XCTAssertNotNil(pool.image(for: videoURL, at: 0.05, role: 0))
+    }
+
+    func testExportProgressContinuesBeyondTheWriterInterleaveWindow() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sikamtv-interleave-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let duration = 3.0
+        let audioURL = root.appendingPathComponent("music.caf")
+        let backgroundURL = root.appendingPathComponent("background.png")
+        let outputURL = root.appendingPathComponent("long-export.mp4")
+        try makeAudio(at: audioURL, duration: duration)
+        let backgroundData = NSBitmapImageRep(cgImage: makeBackground()).representation(using: .png, properties: [:])!
+        try backgroundData.write(to: backgroundURL)
+        let frameCount = Int(duration * 30)
+        let analysis = AudioAnalysis(
+            duration: duration,
+            sampleRate: 44_100,
+            amplitudes: Array(repeating: 0.3, count: frameCount),
+            loudness: Array(repeating: 0.35, count: frameCount),
+            bass: Array(repeating: 0.4, count: frameCount),
+            mid: Array(repeating: 0.3, count: frameCount),
+            high: Array(repeating: 0.2, count: frameCount),
+            beats: Array(repeating: 0.25, count: frameCount),
+            spectrum: Array(repeating: Array(repeating: 0.2, count: 96), count: frameCount),
+            waveform: Array(repeating: Array(repeating: 0.1, count: 128), count: frameCount)
+        )
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.blur = 0
+        settings.visualizer = .wave
+        let progressValues = LockedProgress()
+
+        try VideoExporter().export(
+            to: outputURL,
+            backgrounds: [BackgroundMedia(url: backgroundURL, kind: .image, duration: 0)],
+            audioURL: audioURL,
+            lyrics: [LRCLine(time: 0, text: "持续导出测试")],
+            analysis: analysis,
+            settings: settings,
+            fontName: "PingFangSC-Regular",
+            progress: { progressValues.append($0.fraction) }
+        )
+
+        let midProgressCount = progressValues.snapshot.filter { $0 > 0.05 && $0 < 0.95 }.count
+        XCTAssertGreaterThan(midProgressCount, 5, "Dual-queue export must keep publishing progress past the writer interleave window")
+        XCTAssertTrue(progressValues.snapshot.contains(where: { $0 > 0.5 && $0 < 0.95 }))
+        XCTAssertEqual(progressValues.last ?? 0, 1, accuracy: 0.0001)
+        XCTAssertGreaterThan((try FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? NSNumber)?.intValue ?? 0, 10_000)
+    }
+
+    func testExportCanBeCancelledWhileDualQueuesAreRunning() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sikamtv-cancel-running-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let duration = 2.0
+        let audioURL = root.appendingPathComponent("music.caf")
+        let backgroundURL = root.appendingPathComponent("background.png")
+        let outputURL = root.appendingPathComponent("cancelled-running.mp4")
+        try makeAudio(at: audioURL, duration: duration)
+        let backgroundData = NSBitmapImageRep(cgImage: makeBackground()).representation(using: .png, properties: [:])!
+        try backgroundData.write(to: backgroundURL)
+        let frameCount = Int(duration * 30)
+        let analysis = AudioAnalysis(
+            duration: duration,
+            sampleRate: 44_100,
+            amplitudes: Array(repeating: 0.3, count: frameCount),
+            loudness: Array(repeating: 0.35, count: frameCount),
+            bass: Array(repeating: 0.4, count: frameCount),
+            mid: Array(repeating: 0.3, count: frameCount),
+            high: Array(repeating: 0.2, count: frameCount),
+            beats: Array(repeating: 0.25, count: frameCount),
+            spectrum: Array(repeating: Array(repeating: 0.2, count: 96), count: frameCount),
+            waveform: Array(repeating: Array(repeating: 0.1, count: 128), count: frameCount)
+        )
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.blur = 0
+        let token = ExportCancellationToken()
+        let cancelledDuringEncoding = LockedFlag()
+
+        XCTAssertThrowsError(try VideoExporter().export(
+            to: outputURL,
+            backgrounds: [BackgroundMedia(url: backgroundURL, kind: .image, duration: 0)],
+            audioURL: audioURL,
+            lyrics: [LRCLine(time: 0, text: "运行中取消")],
+            analysis: analysis,
+            settings: settings,
+            fontName: "PingFangSC-Regular",
+            cancellationToken: token,
+            progress: { progress in
+                if progress.fraction > 0.04 && progress.fraction < 0.95 {
+                    cancelledDuringEncoding.value = true
+                    token.cancel()
+                }
+            }
+        )) { error in
+            guard case VideoExporter.ExportError.cancelled = error else {
+                return XCTFail("Expected cancellation, got \(error)")
+            }
+        }
+        XCTAssertTrue(cancelledDuringEncoding.value)
+    }
+
+    private final class LockedFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored = false
+
+        var value: Bool {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return stored
+            }
+            set {
+                lock.lock()
+                stored = newValue
+                lock.unlock()
+            }
+        }
+    }
+
+    private final class LockedProgress: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [Double] = []
+
+        var snapshot: [Double] {
+            lock.lock()
+            defer { lock.unlock() }
+            return values
+        }
+
+        var first: Double? { snapshot.first }
+        var last: Double? { snapshot.last }
+
+        func append(_ value: Double) {
+            lock.lock()
+            values.append(value)
+            lock.unlock()
+        }
     }
 
     private func makeAudio(at url: URL, duration: Double) throws {
