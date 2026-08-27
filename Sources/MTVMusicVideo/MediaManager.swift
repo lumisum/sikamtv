@@ -7,17 +7,17 @@ import UniformTypeIdentifiers
 final class MediaManager {
     static let shared = MediaManager()
 
-    func chooseBackgrounds() -> [BackgroundMedia] {
+    func chooseBackgroundURLs() -> [URL] {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.jpeg, .png, .heic, .mpeg4Movie, .quickTimeMovie]
         panel.allowsMultipleSelection = true
         panel.message = "选择一张或多张背景图片 / 视频"
         panel.prompt = "选择背景"
         guard panel.runModal() == .OK else { return [] }
-        return panel.urls.compactMap(backgroundMedia(for:))
+        return panel.urls
     }
 
-    func backgroundMedia(for url: URL) -> BackgroundMedia? {
+    nonisolated static func backgroundMedia(for url: URL) -> BackgroundMedia? {
         let supportedImages = ["jpg", "jpeg", "png", "heic"]
         let isVideo = ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
         guard isVideo || supportedImages.contains(url.pathExtension.lowercased()) else { return nil }

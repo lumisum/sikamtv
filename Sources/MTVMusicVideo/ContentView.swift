@@ -66,7 +66,7 @@ struct AssetsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("素材").font(.title3.weight(.semibold))
-            AssetRow(title: "背景", detail: workspace.backgroundSummary, systemImage: workspace.backgrounds.count > 1 ? "photo.stack" : "photo.on.rectangle", action: workspace.importBackground)
+            AssetRow(title: "背景", detail: workspace.isLoadingBackgrounds ? "正在读取视频信息…" : workspace.backgroundSummary, systemImage: workspace.backgrounds.count > 1 ? "photo.stack" : "photo.on.rectangle", action: workspace.importBackground)
             AssetRow(title: "音乐", detail: workspace.isAnalyzingAudio ? "正在分析 \(Int(workspace.audioAnalysisProgress * 100))%" : workspace.audioURL?.lastPathComponent, systemImage: "music.note", action: workspace.importAudio)
             AssetRow(title: "字幕 / 歌词", detail: workspace.lyricsURL?.lastPathComponent, systemImage: "captions.bubble", action: workspace.importLyrics)
             Divider().padding(.vertical, 3)
@@ -424,8 +424,21 @@ struct SettingsPanel: View {
                 Text("\(workspace.exportMessage) · \(Int(workspace.exportFraction * 100))%")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("\(formatTime(workspace.exportCurrentTime)) / \(formatTime(workspace.exportTotalDuration))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Button(role: .destructive) { workspace.cancelExport() } label: {
+                    Label("停止生成", systemImage: "stop.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             }
         }
+    }
+
+    private func formatTime(_ time: Double) -> String {
+        guard time.isFinite else { return "00:00" }
+        return String(format: "%02d:%02d", Int(time) / 60, Int(time) % 60)
     }
 }
 

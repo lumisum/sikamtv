@@ -25,6 +25,14 @@ enum AspectRatio: String, CaseIterable, Identifiable, Codable, Sendable {
         case .square: return CGSize(width: 720, height: 720)
         }
     }
+
+    var realtimePreviewSize: CGSize {
+        switch self {
+        case .portrait: return CGSize(width: 360, height: 640)
+        case .landscape: return CGSize(width: 640, height: 360)
+        case .square: return CGSize(width: 480, height: 480)
+        }
+    }
 }
 
 enum MediaKind: Sendable { case image, video }

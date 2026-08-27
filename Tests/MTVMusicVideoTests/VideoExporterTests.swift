@@ -40,6 +40,7 @@ final class VideoExporterTests: XCTestCase {
         settings.backgroundTransition = .crossfade
         settings.backgroundTransitionDuration = 0.1
         let lyrics = [LRCLine(time: 0, text: "SikaMTV 导出测试")]
+        var progressValues: [Double] = []
         try VideoExporter().export(
             to: outputURL,
             backgrounds: [
@@ -51,13 +52,60 @@ final class VideoExporterTests: XCTestCase {
             analysis: analysis,
             settings: settings,
             fontName: "PingFangSC-Regular",
-            progress: { _ in }
+            progress: { progressValues.append($0.fraction) }
         )
+        XCTAssertGreaterThan(progressValues.first ?? 0, 0)
+        XCTAssertEqual(progressValues.last ?? 0, 1, accuracy: 0.0001)
         let attributes = try FileManager.default.attributesOfItem(atPath: outputURL.path)
         XCTAssertGreaterThan((attributes[.size] as? NSNumber)?.intValue ?? 0, 10_000)
         let asset = AVAsset(url: outputURL)
         XCTAssertFalse(asset.tracks(withMediaType: .video).isEmpty)
         XCTAssertFalse(asset.tracks(withMediaType: .audio).isEmpty)
+    }
+
+    func testExportCanBeCancelledBeforeTheFirstFrame() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sikamtv-cancel-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let audioURL = root.appendingPathComponent("test.caf")
+        let backgroundURL = root.appendingPathComponent("background.png")
+        let outputURL = root.appendingPathComponent("cancelled.mp4")
+        try makeAudio(at: audioURL, duration: 0.2)
+        let backgroundData = NSBitmapImageRep(cgImage: makeBackground()).representation(using: .png, properties: [:])!
+        try backgroundData.write(to: backgroundURL)
+        let analysis = AudioAnalysis(duration: 0.2, sampleRate: 44_100, amplitudes: [0], loudness: [0], bass: [0], mid: [0], high: [0], beats: [0], spectrum: [Array(repeating: 0, count: 96)], waveform: [Array(repeating: 0, count: 128)])
+        let token = ExportCancellationToken()
+        token.cancel()
+
+        XCTAssertThrowsError(try VideoExporter().export(
+            to: outputURL,
+            backgrounds: [BackgroundMedia(url: backgroundURL, kind: .image, duration: 0)],
+            audioURL: audioURL,
+            lyrics: [LRCLine(time: 0, text: "取消测试")],
+            analysis: analysis,
+            settings: RenderSettings(),
+            fontName: "PingFangSC-Regular",
+            cancellationToken: token,
+            progress: { _ in }
+        )) { error in
+            guard case VideoExporter.ExportError.cancelled = error else {
+                return XCTFail("Expected cancellation, got \(error)")
+            }
+        }
+    }
+
+    func testSequentialVideoDecoderSupportsPlaybackAndSeeking() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sikamtv-decoder-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let videoURL = root.appendingPathComponent("background.mp4")
+        try makeVideo(at: videoURL, duration: 0.5)
+        let pool = VideoFrameDecoderPool()
+
+        XCTAssertNotNil(pool.image(for: videoURL, at: 0, role: 0))
+        XCTAssertNotNil(pool.image(for: videoURL, at: 0.1, role: 0))
+        XCTAssertNotNil(pool.image(for: videoURL, at: 0.2, role: 0))
+        XCTAssertNotNil(pool.image(for: videoURL, at: 0.05, role: 0))
     }
 
     private func makeAudio(at url: URL, duration: Double) throws {
@@ -81,5 +129,34 @@ final class VideoExporterTests: XCTestCase {
         let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [CGColor(red: 0.08, green: 0.12, blue: 0.30, alpha: 1), CGColor(red: 0.55, green: 0.10, blue: 0.42, alpha: 1)] as CFArray, locations: [0, 1])!
         context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 512, y: 512), options: [])
         return context.makeImage()!
+    }
+
+    private func makeVideo(at url: URL, duration: Double) throws {
+        let size = CGSize(width: 320, height: 180)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Int(size.width), AVVideoHeightKey: Int(size.height)])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: Int(size.width), kCVPixelBufferHeightKey as String: Int(size.height)])
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        let frameCount = Int(duration * 30)
+        for frame in 0..<frameCount {
+            while !input.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.001) }
+            var buffer: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, adaptor.pixelBufferPool!, &buffer), kCVReturnSuccess)
+            guard let buffer else { continue }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let base = CVPixelBufferGetBaseAddress(buffer), let context = CGContext(data: base, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
+                context.setFillColor(CGColor(red: CGFloat(frame) / CGFloat(max(1, frameCount)), green: 0.3, blue: 0.7, alpha: 1))
+                context.fill(CGRect(origin: .zero, size: size))
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30)))
+        }
+        input.markAsFinished()
+        let semaphore = DispatchSemaphore(value: 0)
+        writer.finishWriting { semaphore.signal() }
+        semaphore.wait()
+        XCTAssertEqual(writer.status, .completed)
     }
 }

@@ -3,11 +3,29 @@ import AppKit
 import CoreVideo
 import Foundation
 
+final class ExportCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+}
+
 final class VideoExporter: @unchecked Sendable {
     struct ExportProgress {
         let fraction: Double
         let current: Double
         let duration: Double
+        let status: String
     }
 
     enum ExportError: LocalizedError {
@@ -15,6 +33,7 @@ final class VideoExporter: @unchecked Sendable {
         case cannotCreatePixelBuffer
         case cannotReadAudio
         case failedToWrite
+        case cancelled
 
         var errorDescription: String? {
             switch self {
@@ -22,17 +41,30 @@ final class VideoExporter: @unchecked Sendable {
             case .cannotCreatePixelBuffer: return "无法创建视频帧"
             case .cannotReadAudio: return "无法读取音频"
             case .failedToWrite: return "视频写入失败"
+            case .cancelled: return "已停止生成"
             }
         }
     }
 
-    func export(to url: URL, backgrounds: [BackgroundMedia], audioURL: URL, lyrics: [LRCLine], analysis: AudioAnalysis, settings: RenderSettings, fontName: String, backgroundAudioEnabled: Bool = false, backgroundAudioVolume: Double = 0.25, progress: @escaping (ExportProgress) -> Void) throws {
+    func export(to url: URL, backgrounds: [BackgroundMedia], audioURL: URL, lyrics: [LRCLine], analysis: AudioAnalysis, settings: RenderSettings, fontName: String, backgroundAudioEnabled: Bool = false, backgroundAudioVolume: Double = 0.25, cancellationToken: ExportCancellationToken = ExportCancellationToken(), progress: @escaping (ExportProgress) -> Void) throws {
         let duration = analysis.duration
         let size = settings.aspectRatio.size1080
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { throw ExportError.cannotCreateWriter }
+        var completed = false
+        defer {
+            if !completed {
+                writer.cancelWriting()
+            }
+        }
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Int(size.width), AVVideoHeightKey: Int(size.height), AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 12_000_000, AVVideoExpectedSourceFrameRateKey: 30]])
         videoInput.expectsMediaDataInRealTime = false
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: Int(size.width), kCVPixelBufferHeightKey as String: Int(size.height)])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: Int(size.width),
+            kCVPixelBufferHeightKey as String: Int(size.height),
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ])
         writer.add(videoInput)
 
         let mixedAudio: BackgroundAudioMixResult
@@ -59,11 +91,12 @@ final class VideoExporter: @unchecked Sendable {
         reader.add(audioOutput)
         guard writer.startWriting() else { throw writer.error ?? ExportError.failedToWrite }
         writer.startSession(atSourceTime: .zero)
+        progress(ExportProgress(fraction: 0.005, current: 0, duration: duration, status: "正在准备编码"))
 
         let render = RenderEngine()
         var staticImages: [URL: CGImage] = [:]
-        var videoGenerators: [URL: AVAssetImageGenerator] = [:]
-        func image(for media: BackgroundMedia?, at localTime: Double) -> CGImage? {
+        let videoDecoders = VideoFrameDecoderPool()
+        func image(for media: BackgroundMedia?, at localTime: Double, role: Int) -> CGImage? {
             guard let media else { return nil }
             if media.kind == .image {
                 if let cached = staticImages[media.url] { return cached }
@@ -71,23 +104,18 @@ final class VideoExporter: @unchecked Sendable {
                 if let loaded { staticImages[media.url] = loaded }
                 return loaded
             }
-            let generator: AVAssetImageGenerator
-            if let cached = videoGenerators[media.url] { generator = cached }
-            else {
-                generator = AVAssetImageGenerator(asset: AVAsset(url: media.url))
-                generator.appliesPreferredTrackTransform = true
-                generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
-                generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
-                videoGenerators[media.url] = generator
-            }
             let loopTime = media.playbackTime(for: localTime)
-            return try? generator.copyCGImage(at: CMTime(seconds: loopTime, preferredTimescale: 600), actualTime: nil)
+            return videoDecoders.image(for: media.url, at: loopTime, role: role)
         }
         let fps = 30.0
         let frameCount = Int(ceil(duration * fps))
         for frame in 0..<frameCount {
             try autoreleasepool {
-                while !videoInput.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.002) }
+                try checkCancellation(cancellationToken)
+                while !videoInput.isReadyForMoreMediaData {
+                    try checkCancellation(cancellationToken)
+                    Thread.sleep(forTimeInterval: 0.002)
+                }
                 let time = Double(frame) / fps
                 let timeline = BackgroundTimeline.state(
                     at: time,
@@ -99,9 +127,12 @@ final class VideoExporter: @unchecked Sendable {
                 )
                 let currentMedia = timeline.map { backgrounds[$0.currentIndex] }
                 let nextMedia = timeline?.nextIndex.map { backgrounds[$0] }
-                let frameImage = image(for: currentMedia, at: timeline?.currentLocalTime ?? time)
-                let nextFrameImage = image(for: nextMedia, at: timeline?.nextLocalTime ?? 0)
-                guard let image = render.render(
+                let frameImage = image(for: currentMedia, at: timeline?.currentLocalTime ?? time, role: 0)
+                let nextFrameImage = image(for: nextMedia, at: timeline?.nextLocalTime ?? 0, role: 1)
+                guard let pixelBuffer = makePixelBuffer(size: size, pool: adaptor.pixelBufferPool),
+                      let context = bitmapContext(for: pixelBuffer, size: size) else { throw ExportError.cannotCreatePixelBuffer }
+                render.render(
+                    into: context,
                     size: size,
                     time: time,
                     settings: settings,
@@ -115,28 +146,47 @@ final class VideoExporter: @unchecked Sendable {
                     lyrics: lyrics,
                     analysis: analysis,
                     fontName: fontName
-                ), let pixelBuffer = makePixelBuffer(image: image, size: size, pool: adaptor.pixelBufferPool) else { throw ExportError.cannotCreatePixelBuffer }
+                )
+                CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
                 let presentation = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps))
                 guard adaptor.append(pixelBuffer, withPresentationTime: presentation) else { throw writer.error ?? ExportError.failedToWrite }
-                if frame % 5 == 0 { progress(ExportProgress(fraction: Double(frame) / Double(max(frameCount, 1)), current: time, duration: duration)) }
+                if frame % 3 == 0 {
+                    let fraction = 0.01 + Double(frame + 1) / Double(max(frameCount, 1)) * 0.94
+                    progress(ExportProgress(fraction: fraction, current: time, duration: duration, status: "正在渲染视频"))
+                }
             }
         }
         videoInput.markAsFinished()
+        try checkCancellation(cancellationToken)
+        progress(ExportProgress(fraction: 0.955, current: duration, duration: duration, status: "正在混合音频"))
         guard reader.startReading() else { throw reader.error ?? ExportError.cannotReadAudio }
         while let sample = audioOutput.copyNextSampleBuffer() {
-            while !audioInput.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.002) }
+            try checkCancellation(cancellationToken)
+            while !audioInput.isReadyForMoreMediaData {
+                try checkCancellation(cancellationToken)
+                Thread.sleep(forTimeInterval: 0.002)
+            }
             if !audioInput.append(sample) { throw writer.error ?? ExportError.failedToWrite }
         }
         audioInput.markAsFinished()
         if reader.status == .reading { reader.cancelReading() }
+        try checkCancellation(cancellationToken)
+        progress(ExportProgress(fraction: 0.99, current: duration, duration: duration, status: "正在完成文件"))
         let semaphore = DispatchSemaphore(value: 0)
         writer.finishWriting { semaphore.signal() }
-        semaphore.wait()
+        while semaphore.wait(timeout: .now() + 0.1) == .timedOut {
+            try checkCancellation(cancellationToken)
+        }
         guard writer.status == .completed else { throw writer.error ?? ExportError.failedToWrite }
-        progress(ExportProgress(fraction: 1, current: duration, duration: duration))
+        completed = true
+        progress(ExportProgress(fraction: 1, current: duration, duration: duration, status: "生成完成"))
     }
 
-    private func makePixelBuffer(image: CGImage, size: CGSize, pool: CVPixelBufferPool?) -> CVPixelBuffer? {
+    private func checkCancellation(_ token: ExportCancellationToken) throws {
+        if token.isCancelled || Task.isCancelled { throw ExportError.cancelled }
+    }
+
+    private func makePixelBuffer(size: CGSize, pool: CVPixelBufferPool?) -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?
         if let pool {
             guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer) == kCVReturnSuccess else { return nil }
@@ -144,11 +194,16 @@ final class VideoExporter: @unchecked Sendable {
             let attrs = [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true] as CFDictionary
             guard CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height), kCVPixelFormatType_32BGRA, attrs, &pixelBuffer) == kCVReturnSuccess else { return nil }
         }
-        guard let buffer = pixelBuffer else { return nil }
+        return pixelBuffer
+    }
+
+    private func bitmapContext(for buffer: CVPixelBuffer, size: CGSize) -> CGContext? {
         CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        guard let base = CVPixelBufferGetBaseAddress(buffer), let context = CGContext(data: base, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
-        context.draw(image, in: CGRect(origin: .zero, size: size))
-        return buffer
+        guard let base = CVPixelBufferGetBaseAddress(buffer),
+              let context = CGContext(data: base, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else {
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            return nil
+        }
+        return context
     }
 }

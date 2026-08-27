@@ -16,8 +16,11 @@ final class AudioFeaturesTests: XCTestCase {
     func testPreviewTargetsPreserveExportAspectRatio() {
         for ratio in AspectRatio.allCases {
             let preview = ratio.previewSize.width / ratio.previewSize.height
+            let realtime = ratio.realtimePreviewSize.width / ratio.realtimePreviewSize.height
             let export = ratio.size1080.width / ratio.size1080.height
             XCTAssertEqual(preview, export, accuracy: 0.0001, "Aspect mismatch for \(ratio.rawValue)")
+            XCTAssertEqual(realtime, export, accuracy: 0.0001, "Realtime aspect mismatch for \(ratio.rawValue)")
+            XCTAssertLessThan(ratio.realtimePreviewSize.width * ratio.realtimePreviewSize.height, ratio.previewSize.width * ratio.previewSize.height)
         }
     }
 

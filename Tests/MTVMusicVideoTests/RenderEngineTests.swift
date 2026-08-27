@@ -46,4 +46,24 @@ final class RenderEngineTests: XCTestCase {
             XCTAssertEqual(image?.height, 960)
         }
     }
+
+    func testRealtimePreviewStaysWithinThirtyFPSFrameBudgetWith4KBackground() throws {
+        let backgroundContext = CGContext(data: nil, width: 3840, height: 2160, bitsPerComponent: 8, bytesPerRow: 3840 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        backgroundContext.setFillColor(CGColor(red: 0.14, green: 0.32, blue: 0.62, alpha: 1))
+        backgroundContext.fill(CGRect(x: 0, y: 0, width: 3840, height: 2160))
+        let background = try XCTUnwrap(backgroundContext.makeImage())
+        let engine = RenderEngine()
+        var settings = RenderSettings()
+        settings.blur = 22
+        let size = AspectRatio.portrait.realtimePreviewSize
+
+        _ = engine.render(size: size, time: 0, settings: settings, background: background, backgroundDuration: 10, lyrics: [], analysis: nil, fontName: "PingFangSC-Regular")
+        let frameCount = 12
+        let start = CFAbsoluteTimeGetCurrent()
+        for frame in 0..<frameCount {
+            XCTAssertNotNil(engine.render(size: size, time: Double(frame) / 30, settings: settings, background: background, backgroundDuration: 10, lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        }
+        let averageMilliseconds = (CFAbsoluteTimeGetCurrent() - start) * 1_000 / Double(frameCount)
+        XCTAssertLessThan(averageMilliseconds, 33.3, "Realtime preview averaged \(averageMilliseconds) ms per frame")
+    }
 }

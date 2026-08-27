@@ -2,15 +2,24 @@ import AppKit
 import CoreImage
 import CoreText
 import Foundation
+import Metal
 
 final class RenderEngine {
     private struct BackgroundCacheKey: Hashable {
         let identifier: String
         let blur: Int
         let saturation: Int
+        let width: Int
+        let height: Int
     }
 
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false, .cacheIntermediates: true])
+    private let ciContext: CIContext = {
+        let options: [CIContextOption: Any] = [.useSoftwareRenderer: false, .cacheIntermediates: true]
+        if let device = MTLCreateSystemDefaultDevice() {
+            return CIContext(mtlDevice: device, options: options)
+        }
+        return CIContext(options: options)
+    }()
     private let visualizerEngine = VisualizerEngine()
     private var backgroundCache: [BackgroundCacheKey: CGImage] = [:]
 
@@ -34,6 +43,43 @@ final class RenderEngine {
         guard width > 0, height > 0,
               let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        render(
+            into: context,
+            size: size,
+            time: time,
+            settings: settings,
+            background: background,
+            backgroundDuration: backgroundDuration,
+            backgroundIdentifier: backgroundIdentifier,
+            nextBackground: nextBackground,
+            nextBackgroundDuration: nextBackgroundDuration,
+            nextBackgroundIdentifier: nextBackgroundIdentifier,
+            backgroundTimeline: backgroundTimeline,
+            lyrics: lyrics,
+            analysis: analysis,
+            fontName: fontName
+        )
+        return context.makeImage()
+    }
+
+    /// Draws directly into a caller-owned bitmap context. Export uses this path
+    /// to avoid creating and copying an intermediate full-resolution CGImage.
+    func render(
+        into context: CGContext,
+        size: CGSize,
+        time: Double,
+        settings: RenderSettings,
+        background: CGImage?,
+        backgroundDuration: Double,
+        backgroundIdentifier: String? = nil,
+        nextBackground: CGImage? = nil,
+        nextBackgroundDuration: Double = 0,
+        nextBackgroundIdentifier: String? = nil,
+        backgroundTimeline: BackgroundTimelineState? = nil,
+        lyrics: [LRCLine],
+        analysis: AudioAnalysis?,
+        fontName: String
+    ) {
         context.setFillColor(NSColor.black.cgColor)
         context.fill(CGRect(origin: .zero, size: size))
 
@@ -68,7 +114,6 @@ final class RenderEngine {
             template: settings.template
         )
         drawLyrics(lyrics, in: context, size: size, time: time, settings: settings, fontName: fontName)
-        return context.makeImage()
     }
 
     private func drawBackgroundSequence(_ image: CGImage, identifier: String?, mediaDuration: Double, next: CGImage?, nextIdentifier: String?, nextMediaDuration: Double, timeline: BackgroundTimelineState?, in context: CGContext, size: CGSize, time: Double, settings: RenderSettings) {
@@ -102,16 +147,16 @@ final class RenderEngine {
     private func drawBackgroundLayer(_ image: CGImage, identifier: String?, mediaDuration: Double, localTime: Double, segmentDuration: Double, alpha: CGFloat, offsetX: CGFloat, extraZoom: CGFloat, in context: CGContext, size: CGSize, settings: RenderSettings) {
         let filtered: CGImage
         if mediaDuration <= 0, let identifier {
-            let key = BackgroundCacheKey(identifier: identifier, blur: Int(settings.blur * 10), saturation: Int(settings.saturation * 100))
+            let key = BackgroundCacheKey(identifier: identifier, blur: Int(settings.blur * 10), saturation: Int(settings.saturation * 100), width: Int(size.width), height: Int(size.height))
             if let cached = backgroundCache[key] { filtered = cached }
             else {
-                guard let result = filteredBackground(image, settings: settings) else { return }
+                guard let result = filteredBackground(image, targetSize: size, settings: settings) else { return }
                 if backgroundCache.count > 24 { backgroundCache.removeAll(keepingCapacity: true) }
                 backgroundCache[key] = result
                 filtered = result
             }
         } else {
-            guard let result = filteredBackground(image, settings: settings) else { return }
+            guard let result = filteredBackground(image, targetSize: size, settings: settings) else { return }
             filtered = result
         }
 
@@ -125,13 +170,18 @@ final class RenderEngine {
         context.restoreGState()
     }
 
-    private func filteredBackground(_ image: CGImage, settings: RenderSettings) -> CGImage? {
+    private func filteredBackground(_ image: CGImage, targetSize: CGSize, settings: RenderSettings) -> CGImage? {
         var ciImage = CIImage(cgImage: image)
+        let sourceSize = CGSize(width: image.width, height: image.height)
+        let downsampleScale = min(1, max(targetSize.width / max(1, sourceSize.width), targetSize.height / max(1, sourceSize.height)) * 1.06)
+        if downsampleScale < 0.999 {
+            ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: downsampleScale, y: downsampleScale))
+        }
         if settings.blur > 0 {
-            let sourceToExport = CGFloat(image.width) / max(1, settings.aspectRatio.size1080.width)
+            let renderScale = targetSize.width / max(1, settings.aspectRatio.size1080.width)
             let filter = CIFilter(name: "CIGaussianBlur")!
             filter.setValue(ciImage, forKey: kCIInputImageKey)
-            filter.setValue(settings.blur * sourceToExport, forKey: kCIInputRadiusKey)
+            filter.setValue(settings.blur * renderScale, forKey: kCIInputRadiusKey)
             ciImage = filter.outputImage?.cropped(to: ciImage.extent) ?? ciImage
         }
         let color = CIFilter(name: "CIColorControls")!

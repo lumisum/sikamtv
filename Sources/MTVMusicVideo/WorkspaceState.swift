@@ -38,6 +38,7 @@ final class WorkspaceState: ObservableObject {
     @Published var currentTime: Double = 0 { didSet { previewUpdates.send(()) } }
     @Published var isPlaying = false
     @Published var isAnalyzingAudio = false
+    @Published var isLoadingBackgrounds = false
     @Published var audioAnalysisProgress: Double = 0
     @Published var audioAnalysisStatus = ""
     @Published private(set) var audioDuration: Double = 0
@@ -45,6 +46,8 @@ final class WorkspaceState: ObservableObject {
     @Published var isExporting = false
     @Published var exportFraction: Double = 0
     @Published var exportMessage = ""
+    @Published var exportCurrentTime: Double = 0
+    @Published var exportTotalDuration: Double = 0
     @Published var alertMessage: String?
 
     let fontManager = FontManager()
@@ -55,6 +58,8 @@ final class WorkspaceState: ObservableObject {
     private var playbackEndObserver: NSObjectProtocol?
     private var audioAnalysisTask: Task<AudioAnalysis, Error>?
     private var mixRefreshTask: Task<Void, Never>?
+    private var exportTask: Task<Void, Never>?
+    private var exportCancellationToken: ExportCancellationToken?
 
     init() {
         backgroundAudioEnabled = UserDefaults.standard.bool(forKey: "SikaMTV.BackgroundAudioEnabled")
@@ -85,9 +90,9 @@ final class WorkspaceState: ObservableObject {
     var hasBackgroundAudio: Bool { backgrounds.contains { $0.kind == .video && $0.hasAudio } }
 
     func importBackground() {
-        let selected = MediaManager.shared.chooseBackgrounds()
-        guard !selected.isEmpty else { return }
-        backgrounds = selected
+        let urls = MediaManager.shared.chooseBackgroundURLs()
+        guard !urls.isEmpty else { return }
+        loadBackgrounds(from: urls, replacing: true)
     }
 
     func importAudio() {
@@ -163,7 +168,7 @@ final class WorkspaceState: ObservableObject {
     func handleDropped(url: URL) {
         let ext = url.pathExtension.lowercased()
         if ["jpg", "jpeg", "png", "heic", "mp4", "mov", "m4v"].contains(ext) {
-            if let media = MediaManager.shared.backgroundMedia(for: url) { backgrounds.append(media) }
+            loadBackgrounds(from: [url], replacing: false)
         } else if ["wav", "mp3", "m4a", "aac", "aiff", "flac"].contains(ext) {
             importAudio(url: url)
         } else if ["lrc", "srt"].contains(ext) {
@@ -175,6 +180,20 @@ final class WorkspaceState: ObservableObject {
         if let font = fontManager.importFont() {
             selectedFont = font
             settings.fontPostScriptName = font.postScriptName
+        }
+    }
+
+    private func loadBackgrounds(from urls: [URL], replacing: Bool) {
+        isLoadingBackgrounds = true
+        Task { @MainActor [weak self] in
+            let loaded = await Task.detached(priority: .userInitiated) {
+                urls.compactMap(MediaManager.backgroundMedia(for:))
+            }.value
+            guard let self else { return }
+            if replacing { self.backgrounds = loaded }
+            else { self.backgrounds.append(contentsOf: loaded) }
+            self.isLoadingBackgrounds = false
+            if loaded.isEmpty { self.alertMessage = "没有读取到可用的背景图片或视频" }
         }
     }
 
@@ -232,10 +251,12 @@ final class WorkspaceState: ObservableObject {
         if isPlaying {
             player.pause()
             isPlaying = false
+            previewUpdates.send(())
         } else {
             if currentTime >= max(0, duration - 0.1) { seek(to: 0) }
             player.play()
             isPlaying = true
+            previewUpdates.send(())
         }
     }
 
@@ -245,7 +266,7 @@ final class WorkspaceState: ObservableObject {
     }
 
     func requestPreview(size: CGSize? = nil, completion: @escaping @MainActor (CGImage?, Double) -> Void) {
-        let targetSize = size ?? settings.aspectRatio.previewSize
+        let targetSize = size ?? (isPlaying ? settings.aspectRatio.realtimePreviewSize : settings.aspectRatio.previewSize)
         let snapshot = PreviewSnapshot(
             size: targetSize,
             time: currentTime,
@@ -273,6 +294,8 @@ final class WorkspaceState: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         isExporting = true
         exportFraction = 0
+        exportCurrentTime = 0
+        exportTotalDuration = analysis.duration
         exportMessage = "正在生成视频"
         let settings = self.settings
         let selectedPostScriptName = selectedFont?.postScriptName ?? settings.fontPostScriptName
@@ -281,7 +304,9 @@ final class WorkspaceState: ObservableObject {
         let exporter = self.exporter
         let exportBackgroundAudioEnabled = backgroundAudioEnabled
         let exportBackgroundAudioVolume = backgroundAudioVolume
-        Task.detached { [weak self] in
+        let cancellationToken = ExportCancellationToken()
+        exportCancellationToken = cancellationToken
+        exportTask = Task.detached { [weak self] in
             do {
                 try exporter.export(
                     to: url,
@@ -292,25 +317,46 @@ final class WorkspaceState: ObservableObject {
                     settings: settings,
                     fontName: selectedPostScriptName,
                     backgroundAudioEnabled: exportBackgroundAudioEnabled,
-                    backgroundAudioVolume: exportBackgroundAudioVolume
+                    backgroundAudioVolume: exportBackgroundAudioVolume,
+                    cancellationToken: cancellationToken
                 ) { progress in
                     Task { @MainActor [weak self] in
                         self?.exportFraction = progress.fraction
-                        self?.exportMessage = "正在生成《\(audioURL.deletingPathExtension().lastPathComponent)》"
+                        self?.exportCurrentTime = progress.current
+                        self?.exportTotalDuration = progress.duration
+                        self?.exportMessage = progress.status
                     }
                 }
                 await MainActor.run {
                     self?.isExporting = false
                     self?.exportMessage = "生成完成"
+                    self?.exportCancellationToken = nil
+                    self?.exportTask = nil
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
             } catch {
                 await MainActor.run {
                     self?.isExporting = false
-                    self?.alertMessage = "导出失败：\(error.localizedDescription)"
+                    self?.exportCancellationToken = nil
+                    self?.exportTask = nil
+                    if case VideoExporter.ExportError.cancelled = error {
+                        try? FileManager.default.removeItem(at: url)
+                        self?.exportFraction = 0
+                        self?.exportCurrentTime = 0
+                        self?.exportMessage = "已停止生成"
+                    } else {
+                        self?.alertMessage = "导出失败：\(error.localizedDescription)"
+                    }
                 }
             }
         }
+    }
+
+    func cancelExport() {
+        guard isExporting else { return }
+        exportMessage = "正在停止…"
+        exportCancellationToken?.cancel()
+        exportTask?.cancel()
     }
 
     private func replacePlayer(with url: URL, at startTime: Double, resume: Bool) {
