@@ -11,6 +11,9 @@ final class WorkspaceState: ObservableObject {
     @Published var backgrounds: [BackgroundMedia] = [] {
         didSet { previewRenderer.invalidateMediaCaches(); previewUpdates.send(()); schedulePlaybackMixRefresh() }
     }
+    @Published private(set) var backgroundLibrary: [BackgroundMedia] = []
+    @Published private(set) var audioLibrary: [URL] = []
+    @Published private(set) var lyricsLibrary: [URL] = []
     @Published var audioURL: URL?
     @Published var lyricsURL: URL?
     @Published var lyrics: [LRCLine] = [] { didSet { previewUpdates.send(()) } }
@@ -92,15 +95,24 @@ final class WorkspaceState: ObservableObject {
     func importBackground() {
         let urls = MediaManager.shared.chooseBackgroundURLs()
         guard !urls.isEmpty else { return }
-        loadBackgrounds(from: urls, replacing: true)
+        loadBackgrounds(from: urls)
     }
 
     func importAudio() {
         guard let url = MediaManager.shared.chooseAudio() else { return }
-        importAudio(url: url)
+        addAudioToLibrary(url)
     }
 
     func importAudio(url: URL) {
+        addAudioToLibrary(url)
+    }
+
+    func activateAudio(_ url: URL) {
+        addAudioToLibrary(url)
+        loadAudio(url: url)
+    }
+
+    private func loadAudio(url: URL) {
         audioAnalysisTask?.cancel()
         audioURL = url
         audioAnalysis = nil
@@ -112,7 +124,7 @@ final class WorkspaceState: ObservableObject {
         lyricsURL = nil
         lyrics = []
         replacePlayer(with: url, at: 0, resume: false)
-        if let matchingSubtitle = matchingSubtitle(for: url) { loadLyrics(url: matchingSubtitle) }
+        if let matchingSubtitle = matchingSubtitle(for: url) { addLyricsToLibrary(matchingSubtitle) }
 
         let progressHandler: @Sendable (Double) -> Void = { [weak self] progress in
             Task { @MainActor [weak self] in
@@ -160,20 +172,85 @@ final class WorkspaceState: ObservableObject {
 
     func importLyrics() {
         guard let url = MediaManager.shared.chooseLyrics() else { return }
-        loadLyrics(url: url)
+        addLyricsToLibrary(url)
     }
 
-    func importLyrics(url: URL) { loadLyrics(url: url) }
+    func importLyrics(url: URL) { addLyricsToLibrary(url) }
+
+    func activateLyrics(_ url: URL) {
+        addLyricsToLibrary(url)
+        loadLyrics(url: url)
+    }
 
     func handleDropped(url: URL) {
         let ext = url.pathExtension.lowercased()
         if ["jpg", "jpeg", "png", "heic", "mp4", "mov", "m4v"].contains(ext) {
-            loadBackgrounds(from: [url], replacing: false)
+            loadBackgrounds(from: [url])
         } else if ["wav", "mp3", "m4a", "aac", "aiff", "flac"].contains(ext) {
-            importAudio(url: url)
+            addAudioToLibrary(url)
         } else if ["lrc", "srt"].contains(ext) {
-            importLyrics(url: url)
+            addLyricsToLibrary(url)
         }
+    }
+
+    func activateAsset(url: URL) {
+        let ext = url.pathExtension.lowercased()
+        if ["jpg", "jpeg", "png", "heic", "mp4", "mov", "m4v"].contains(ext) {
+            if let media = backgroundLibrary.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
+                activateBackground(media)
+            } else {
+                loadBackgrounds(from: [url]) { [weak self] in
+                    guard let media = $0.first else { return }
+                    self?.activateBackground(media)
+                }
+            }
+        } else if ["wav", "mp3", "m4a", "aac", "aiff", "flac"].contains(ext) {
+            activateAudio(url)
+        } else if ["lrc", "srt"].contains(ext) {
+            activateLyrics(url)
+        }
+    }
+
+    func activateBackground(_ media: BackgroundMedia) {
+        guard !backgrounds.contains(where: { $0.url.standardizedFileURL == media.url.standardizedFileURL }) else { return }
+        if !backgroundLibrary.contains(where: { $0.url.standardizedFileURL == media.url.standardizedFileURL }) {
+            backgroundLibrary.append(media)
+        }
+        backgrounds.append(media)
+    }
+
+    func clearBackgrounds() { backgrounds.removeAll() }
+    func removeBackground(_ media: BackgroundMedia) { backgrounds.removeAll { $0.url.standardizedFileURL == media.url.standardizedFileURL } }
+    func removeBackgroundFromLibrary(_ media: BackgroundMedia) {
+        removeBackground(media)
+        backgroundLibrary.removeAll { $0.url.standardizedFileURL == media.url.standardizedFileURL }
+    }
+
+    func clearAudio() {
+        audioAnalysisTask?.cancel()
+        audioAnalysisTask = nil
+        stopPlayer()
+        audioURL = nil
+        audioAnalysis = nil
+        audioDuration = 0
+        currentTime = 0
+        audioAnalysisProgress = 0
+        audioAnalysisStatus = ""
+    }
+
+    func removeAudioFromLibrary(_ url: URL) {
+        audioLibrary.removeAll { $0.standardizedFileURL == url.standardizedFileURL }
+        if audioURL?.standardizedFileURL == url.standardizedFileURL { clearAudio() }
+    }
+
+    func clearLyrics() {
+        lyricsURL = nil
+        lyrics = []
+    }
+
+    func removeLyricsFromLibrary(_ url: URL) {
+        lyricsLibrary.removeAll { $0.standardizedFileURL == url.standardizedFileURL }
+        if lyricsURL?.standardizedFileURL == url.standardizedFileURL { clearLyrics() }
     }
 
     func importFont() {
@@ -183,18 +260,29 @@ final class WorkspaceState: ObservableObject {
         }
     }
 
-    private func loadBackgrounds(from urls: [URL], replacing: Bool) {
+    private func loadBackgrounds(from urls: [URL], completion: (([BackgroundMedia]) -> Void)? = nil) {
         isLoadingBackgrounds = true
         Task { @MainActor [weak self] in
             let loaded = await Task.detached(priority: .userInitiated) {
                 urls.compactMap(MediaManager.backgroundMedia(for:))
             }.value
             guard let self else { return }
-            if replacing { self.backgrounds = loaded }
-            else { self.backgrounds.append(contentsOf: loaded) }
+            let existing = Set(self.backgroundLibrary.map { $0.url.standardizedFileURL })
+            self.backgroundLibrary.append(contentsOf: loaded.filter { !existing.contains($0.url.standardizedFileURL) })
             self.isLoadingBackgrounds = false
             if loaded.isEmpty { self.alertMessage = "没有读取到可用的背景图片或视频" }
+            completion?(loaded)
         }
+    }
+
+    private func addAudioToLibrary(_ url: URL) {
+        guard !audioLibrary.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) else { return }
+        audioLibrary.append(url)
+    }
+
+    private func addLyricsToLibrary(_ url: URL) {
+        guard !lyricsLibrary.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) else { return }
+        lyricsLibrary.append(url)
     }
 
     func applyTemplate(_ template: VisualTemplate) {
@@ -357,6 +445,16 @@ final class WorkspaceState: ObservableObject {
         exportMessage = "正在停止…"
         exportCancellationToken?.cancel()
         exportTask?.cancel()
+    }
+
+    private func stopPlayer() {
+        if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
+        if let playbackEndObserver { NotificationCenter.default.removeObserver(playbackEndObserver) }
+        player?.pause()
+        player = nil
+        timeObserver = nil
+        playbackEndObserver = nil
+        isPlaying = false
     }
 
     private func replacePlayer(with url: URL, at startTime: Double, resume: Bool) {

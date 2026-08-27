@@ -64,48 +64,139 @@ struct AssetsPanel: View {
     @EnvironmentObject private var workspace: WorkspaceState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("素材").font(.title3.weight(.semibold))
-            AssetRow(title: "背景", detail: workspace.isLoadingBackgrounds ? "正在读取视频信息…" : workspace.backgroundSummary, systemImage: workspace.backgrounds.count > 1 ? "photo.stack" : "photo.on.rectangle", action: workspace.importBackground)
-            AssetRow(title: "音乐", detail: workspace.isAnalyzingAudio ? "正在分析 \(Int(workspace.audioAnalysisProgress * 100))%" : workspace.audioURL?.lastPathComponent, systemImage: "music.note", action: workspace.importAudio)
-            AssetRow(title: "字幕 / 歌词", detail: workspace.lyricsURL?.lastPathComponent, systemImage: "captions.bubble", action: workspace.importLyrics)
-            Divider().padding(.vertical, 3)
-            Text("字体").font(.headline)
-            Picker("字体", selection: selectedFontID) {
-                ForEach(workspace.fontManager.fonts) { font in
-                    Text(font.displayName).tag(font.id)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("素材库").font(.title3.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "square.stack.3d.up")
+                        .foregroundStyle(.secondary)
                 }
-            }
-            .labelsHidden()
-            Button { workspace.importFont() } label: {
-                Label("Import Font", systemImage: "plus.circle")
-            }
-            .buttonStyle(.borderless)
-            Text("请确保您拥有导入字体用于当前作品的合法授权。软件仅使用您提供的字体生成画面。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("背景可一次选择多张图片或视频；也可以把背景、音乐或字幕文件直接拖入窗口。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let message = workspace.alertMessage {
-                ErrorBanner(message: message) { workspace.alertMessage = nil }
-            }
-            Spacer()
-        }
-        .padding(18)
-    }
+                Text("先导入素材，再拖入中央工作区应用。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
-    private var selectedFontID: Binding<String> {
-        Binding<String>(
-            get: { workspace.selectedFont?.id ?? "" },
-            set: { id in
-                let font = workspace.fontManager.fonts.first(where: { $0.id == id })
-                workspace.selectedFont = font
-                workspace.settings.fontPostScriptName = font?.postScriptName ?? workspace.settings.fontPostScriptName
+                LibrarySectionHeader(title: "背景", systemImage: "photo.on.rectangle", action: workspace.importBackground)
+                if workspace.isLoadingBackgrounds {
+                    ProgressView().controlSize(.small)
+                }
+                if workspace.backgroundLibrary.isEmpty && !workspace.isLoadingBackgrounds {
+                    LibraryEmptyRow(text: "导入图片或视频")
+                } else {
+                    ForEach(workspace.backgroundLibrary, id: \.url) { media in
+                        BackgroundLibraryRow(media: media)
+                    }
+                }
+
+                Divider().padding(.vertical, 2)
+                LibrarySectionHeader(title: "音乐", systemImage: "music.note", action: workspace.importAudio)
+                if workspace.audioLibrary.isEmpty {
+                    LibraryEmptyRow(text: "导入 WAV / MP3 / M4A")
+                } else {
+                    ForEach(workspace.audioLibrary, id: \.self) { url in
+                        URLLibraryRow(url: url, icon: "waveform", isActive: workspace.audioURL?.standardizedFileURL == url.standardizedFileURL, activate: { workspace.activateAudio(url) }, remove: { workspace.removeAudioFromLibrary(url) })
+                    }
+                }
+
+                Divider().padding(.vertical, 2)
+                LibrarySectionHeader(title: "歌词 / 字幕", systemImage: "captions.bubble", action: workspace.importLyrics)
+                if workspace.lyricsLibrary.isEmpty {
+                    LibraryEmptyRow(text: "导入 LRC / SRT")
+                } else {
+                    ForEach(workspace.lyricsLibrary, id: \.self) { url in
+                        URLLibraryRow(url: url, icon: "captions.bubble", isActive: workspace.lyricsURL?.standardizedFileURL == url.standardizedFileURL, activate: { workspace.activateLyrics(url) }, remove: { workspace.removeLyricsFromLibrary(url) })
+                    }
+                }
+
+                if let message = workspace.alertMessage {
+                    ErrorBanner(message: message) { workspace.alertMessage = nil }
+                }
+                Spacer(minLength: 12)
             }
-        )
+            .padding(18)
+        }
+    }
+}
+
+private struct LibrarySectionHeader: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack {
+            Label(title, systemImage: systemImage).font(.headline)
+            Spacer()
+            Button(action: action) { Image(systemName: "plus.circle.fill") }
+                .buttonStyle(.plain)
+                .help("导入素材")
+        }
+    }
+}
+
+private struct LibraryEmptyRow: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(9)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct BackgroundLibraryRow: View {
+    @EnvironmentObject private var workspace: WorkspaceState
+    let media: BackgroundMedia
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: media.kind == .video ? "video.fill" : "photo.fill")
+                .foregroundStyle(.secondary)
+            Text(media.url.lastPathComponent)
+                .font(.caption)
+                .lineLimit(1)
+            Spacer()
+            Button { workspace.activateBackground(media) } label: { Image(systemName: "plus") }
+                .buttonStyle(.plain)
+                .help("加入工作区")
+            Button { workspace.removeBackgroundFromLibrary(media) } label: { Image(systemName: "xmark.circle") }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("从素材库移除")
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .onDrag { NSItemProvider(object: media.url as NSURL) }
+    }
+}
+
+private struct URLLibraryRow: View {
+    let url: URL
+    let icon: String
+    let isActive: Bool
+    let activate: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon).foregroundStyle(isActive ? .green : .secondary)
+            Text(url.lastPathComponent).font(.caption).lineLimit(1)
+            Spacer()
+            if isActive { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+            Button(action: activate) { Image(systemName: "plus") }
+                .buttonStyle(.plain)
+                .help("加入工作区")
+            Button(action: remove) { Image(systemName: "xmark.circle") }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("从素材库移除")
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .onDrag { NSItemProvider(object: url as NSURL) }
     }
 }
 
@@ -158,6 +249,8 @@ struct PreviewPanel: View {
             }
             .aspectRatio(previewAspectRatio, contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            WorkspaceDropArea()
+                .frame(height: 126)
             PlaybackControls()
         }
         .padding(22)
@@ -166,6 +259,110 @@ struct PreviewPanel: View {
     private var previewAspectRatio: CGFloat {
         let outputSize = workspace.settings.aspectRatio.size1080
         return outputSize.width / outputSize.height
+    }
+}
+
+struct WorkspaceDropArea: View {
+    @EnvironmentObject private var workspace: WorkspaceState
+    @State private var isTargeted = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("工作区", systemImage: "rectangle.3.group")
+                    .font(.headline)
+                Text("工作区中的素材才会应用")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ActiveBackgroundGroup()
+                    ActiveURLGroup(title: "音乐", icon: "music.note", url: workspace.audioURL, placeholder: "拖入音乐", clear: workspace.clearAudio, remove: nil)
+                    ActiveURLGroup(title: "歌词", icon: "captions.bubble", url: workspace.lyricsURL, placeholder: "拖入 LRC / SRT", clear: workspace.clearLyrics, remove: nil)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+            }
+        }
+        .padding(12)
+        .background(isTargeted ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(isTargeted ? Color.accentColor : Color.secondary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isTargeted) { providers in
+            for provider in providers {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                    guard let data, let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                    Task { @MainActor in workspace.activateAsset(url: url) }
+                }
+            }
+            return true
+        }
+    }
+}
+
+private struct ActiveBackgroundGroup: View {
+    @EnvironmentObject private var workspace: WorkspaceState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label("背景", systemImage: "photo.stack")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                if !workspace.backgrounds.isEmpty {
+                    Button("清除") { workspace.clearBackgrounds() }
+                        .buttonStyle(.borderless)
+                        .font(.caption2)
+                }
+            }
+            if workspace.backgrounds.isEmpty {
+                Text("拖入图片或视频").font(.caption2).foregroundStyle(.secondary)
+            } else {
+                ForEach(workspace.backgrounds, id: \.url) { media in
+                    HStack(spacing: 4) {
+                        Image(systemName: media.kind == .video ? "video" : "photo")
+                        Text(media.url.lastPathComponent).lineLimit(1)
+                        Button { workspace.removeBackground(media) } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.plain)
+                    }
+                    .font(.caption2)
+                }
+            }
+        }
+        .frame(width: 190, alignment: .leading)
+        .padding(9)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct ActiveURLGroup: View {
+    let title: String
+    let icon: String
+    let url: URL?
+    let placeholder: String
+    let clear: () -> Void
+    let remove: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(title, systemImage: icon).font(.caption.weight(.semibold))
+                Spacer()
+                if url != nil {
+                    Button("清除", action: clear).buttonStyle(.borderless).font(.caption2)
+                }
+            }
+            HStack(spacing: 4) {
+                Text(url?.lastPathComponent ?? placeholder)
+                    .font(.caption2)
+                    .foregroundStyle(url == nil ? .secondary : .primary)
+                    .lineLimit(2)
+                if let remove { Button { remove() } label: { Image(systemName: "xmark") }.buttonStyle(.plain) }
+            }
+        }
+        .frame(width: 150, alignment: .leading)
+        .padding(9)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -388,6 +585,21 @@ struct SettingsPanel: View {
                     .buttonStyle(.borderless)
                     .font(.caption)
             }
+            Text("字体").font(.caption.weight(.semibold))
+            Picker("字体", selection: selectedFontID) {
+                ForEach(workspace.fontManager.fonts) { font in
+                    Text(font.displayName).tag(font.id)
+                }
+            }
+            Button { workspace.importFont() } label: {
+                Label("导入 TTF / OTF 字体", systemImage: "plus.circle")
+            }
+            .buttonStyle(.borderless)
+            Text("请确保您拥有导入字体用于当前作品的合法授权。字体仅用于生成当前画面。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
             Picker("歌词动画", selection: $workspace.settings.lyricAnimation) {
                 ForEach(LyricAnimation.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -403,6 +615,17 @@ struct SettingsPanel: View {
             SliderRow(title: "文字光晕", value: $workspace.settings.lyricGlow, range: 0...1, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "动画时长", value: $workspace.settings.lyricAnimationDuration, range: 0.12...1.2, precision: 1, suffix: " s")
         }
+    }
+
+    private var selectedFontID: Binding<String> {
+        Binding<String>(
+            get: { workspace.selectedFont?.id ?? "" },
+            set: { id in
+                let font = workspace.fontManager.fonts.first(where: { $0.id == id })
+                workspace.selectedFont = font
+                workspace.settings.fontPostScriptName = font?.postScriptName ?? workspace.settings.fontPostScriptName
+            }
+        )
     }
 
     private var exportFooter: some View {
