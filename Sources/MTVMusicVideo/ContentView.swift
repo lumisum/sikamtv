@@ -315,6 +315,16 @@ struct SettingsPanel: View {
                 SliderRow(title: "背景模糊", value: $workspace.settings.blur, range: 0...40, suffix: " px")
                 SliderRow(title: "背景暗化", value: $workspace.settings.darkness, range: 0...0.8, displayMultiplier: 100, suffix: "%")
                 SliderRow(title: "饱和度", value: $workspace.settings.saturation, range: 0...1.6, displayMultiplier: 100, suffix: "%")
+                Toggle("播放背景视频声音", isOn: $workspace.backgroundAudioEnabled)
+                    .disabled(!workspace.hasBackgroundAudio)
+                if workspace.backgroundAudioEnabled && workspace.hasBackgroundAudio {
+                    SliderRow(title: "背景声音音量", value: $workspace.backgroundAudioVolume, range: 0...1, displayMultiplier: 100, suffix: "%")
+                }
+                if workspace.backgrounds.contains(where: { $0.kind == .video }) && !workspace.hasBackgroundAudio {
+                    Text("当前背景视频没有可用音轨。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             Divider()
             VStack(alignment: .leading, spacing: 10) {

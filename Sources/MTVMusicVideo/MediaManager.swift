@@ -23,7 +23,8 @@ final class MediaManager {
         guard isVideo || supportedImages.contains(url.pathExtension.lowercased()) else { return nil }
         let asset = AVAsset(url: url)
         let duration = isVideo ? (asset.duration.seconds.isFinite ? asset.duration.seconds : 0) : 0
-        return BackgroundMedia(url: url, kind: isVideo ? .video : .image, duration: duration)
+        let hasAudio = isVideo && !asset.tracks(withMediaType: .audio).isEmpty
+        return BackgroundMedia(url: url, kind: isVideo ? .video : .image, duration: duration, hasAudio: hasAudio)
     }
 
     func chooseAudio() -> URL? {

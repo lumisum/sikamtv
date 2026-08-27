@@ -9,13 +9,29 @@ final class WorkspaceState: ObservableObject {
     let previewUpdates = PassthroughSubject<Void, Never>()
 
     @Published var backgrounds: [BackgroundMedia] = [] {
-        didSet { previewRenderer.invalidateMediaCaches(); previewUpdates.send(()) }
+        didSet { previewRenderer.invalidateMediaCaches(); previewUpdates.send(()); schedulePlaybackMixRefresh() }
     }
     @Published var audioURL: URL?
     @Published var lyricsURL: URL?
     @Published var lyrics: [LRCLine] = [] { didSet { previewUpdates.send(()) } }
     @Published var settings: RenderSettings {
-        didSet { persistSettings(); previewUpdates.send(()) }
+        didSet {
+            persistSettings()
+            previewUpdates.send(())
+            if oldValue.backgroundTransitionDuration != settings.backgroundTransitionDuration { schedulePlaybackMixRefresh() }
+        }
+    }
+    @Published var backgroundAudioEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(backgroundAudioEnabled, forKey: "SikaMTV.BackgroundAudioEnabled")
+            schedulePlaybackMixRefresh()
+        }
+    }
+    @Published var backgroundAudioVolume: Double {
+        didSet {
+            UserDefaults.standard.set(backgroundAudioVolume, forKey: "SikaMTV.BackgroundAudioVolume")
+            schedulePlaybackMixRefresh()
+        }
     }
     @Published var selectedFont: FontOption? { didSet { previewUpdates.send(()) } }
     @Published var audioAnalysis: AudioAnalysis? { didSet { previewUpdates.send(()) } }
@@ -38,8 +54,11 @@ final class WorkspaceState: ObservableObject {
     private var timeObserver: Any?
     private var playbackEndObserver: NSObjectProtocol?
     private var audioAnalysisTask: Task<AudioAnalysis, Error>?
+    private var mixRefreshTask: Task<Void, Never>?
 
     init() {
+        backgroundAudioEnabled = UserDefaults.standard.bool(forKey: "SikaMTV.BackgroundAudioEnabled")
+        backgroundAudioVolume = UserDefaults.standard.object(forKey: "SikaMTV.BackgroundAudioVolume") as? Double ?? 0.25
         if let data = UserDefaults.standard.data(forKey: "SikaMTV.RenderSettings"),
            let restored = try? JSONDecoder().decode(RenderSettings.self, from: data) {
             settings = restored
@@ -63,6 +82,7 @@ final class WorkspaceState: ObservableObject {
         guard backgrounds.count > 1, duration > 0 else { return nil }
         return duration / Double(backgrounds.count)
     }
+    var hasBackgroundAudio: Bool { backgrounds.contains { $0.kind == .video && $0.hasAudio } }
 
     func importBackground() {
         let selected = MediaManager.shared.chooseBackgrounds()
@@ -77,7 +97,6 @@ final class WorkspaceState: ObservableObject {
 
     func importAudio(url: URL) {
         audioAnalysisTask?.cancel()
-        replacePlayer(with: url)
         audioURL = url
         audioAnalysis = nil
         audioDuration = audioFileDuration(for: url)
@@ -87,6 +106,7 @@ final class WorkspaceState: ObservableObject {
         currentTime = 0
         lyricsURL = nil
         lyrics = []
+        replacePlayer(with: url, at: 0, resume: false)
         if let matchingSubtitle = matchingSubtitle(for: url) { loadLyrics(url: matchingSubtitle) }
 
         let progressHandler: @Sendable (Double) -> Void = { [weak self] progress in
@@ -259,9 +279,21 @@ final class WorkspaceState: ObservableObject {
         let exportBackgrounds = backgrounds
         let exportLyrics = lyrics
         let exporter = self.exporter
+        let exportBackgroundAudioEnabled = backgroundAudioEnabled
+        let exportBackgroundAudioVolume = backgroundAudioVolume
         Task.detached { [weak self] in
             do {
-                try exporter.export(to: url, backgrounds: exportBackgrounds, audioURL: audioURL, lyrics: exportLyrics, analysis: analysis, settings: settings, fontName: selectedPostScriptName) { progress in
+                try exporter.export(
+                    to: url,
+                    backgrounds: exportBackgrounds,
+                    audioURL: audioURL,
+                    lyrics: exportLyrics,
+                    analysis: analysis,
+                    settings: settings,
+                    fontName: selectedPostScriptName,
+                    backgroundAudioEnabled: exportBackgroundAudioEnabled,
+                    backgroundAudioVolume: exportBackgroundAudioVolume
+                ) { progress in
                     Task { @MainActor [weak self] in
                         self?.exportFraction = progress.fraction
                         self?.exportMessage = "正在生成《\(audioURL.deletingPathExtension().lastPathComponent)》"
@@ -281,13 +313,28 @@ final class WorkspaceState: ObservableObject {
         }
     }
 
-    private func replacePlayer(with url: URL) {
+    private func replacePlayer(with url: URL, at startTime: Double, resume: Bool) {
         if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
         if let playbackEndObserver { NotificationCenter.default.removeObserver(playbackEndObserver) }
         player?.pause()
-        let replacement = AVPlayer(url: url)
+        let replacement: AVPlayer
+        if backgroundAudioEnabled, hasBackgroundAudio,
+           let mixed = try? BackgroundAudioMixer.make(
+               mainAudioURL: url,
+               backgrounds: backgrounds,
+               projectDuration: duration,
+               backgroundAudioEnabled: true,
+               backgroundVolume: backgroundAudioVolume,
+               transitionDuration: settings.backgroundTransitionDuration
+           ) {
+            let item = AVPlayerItem(asset: mixed.composition)
+            item.audioMix = mixed.audioMix
+            replacement = AVPlayer(playerItem: item)
+        } else {
+            replacement = AVPlayer(url: url)
+        }
         player = replacement
-        isPlaying = false
+        isPlaying = resume
         timeObserver = replacement.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -308,6 +355,18 @@ final class WorkspaceState: ObservableObject {
                 self?.isPlaying = false
                 if let duration = self?.duration { self?.currentTime = duration }
             }
+        }
+        replacement.seek(to: CMTime(seconds: min(max(0, startTime), duration), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        if resume { replacement.play() }
+    }
+
+    private func schedulePlaybackMixRefresh() {
+        guard audioURL != nil else { return }
+        mixRefreshTask?.cancel()
+        mixRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled, let self, let audioURL = self.audioURL else { return }
+            self.replacePlayer(with: audioURL, at: self.currentTime, resume: self.isPlaying)
         }
     }
 

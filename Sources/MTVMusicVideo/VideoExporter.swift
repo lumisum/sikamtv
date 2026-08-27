@@ -26,7 +26,7 @@ final class VideoExporter: @unchecked Sendable {
         }
     }
 
-    func export(to url: URL, backgrounds: [BackgroundMedia], audioURL: URL, lyrics: [LRCLine], analysis: AudioAnalysis, settings: RenderSettings, fontName: String, progress: @escaping (ExportProgress) -> Void) throws {
+    func export(to url: URL, backgrounds: [BackgroundMedia], audioURL: URL, lyrics: [LRCLine], analysis: AudioAnalysis, settings: RenderSettings, fontName: String, backgroundAudioEnabled: Bool = false, backgroundAudioVolume: Double = 0.25, progress: @escaping (ExportProgress) -> Void) throws {
         let duration = analysis.duration
         let size = settings.aspectRatio.size1080
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { throw ExportError.cannotCreateWriter }
@@ -35,12 +35,26 @@ final class VideoExporter: @unchecked Sendable {
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: Int(size.width), kCVPixelBufferHeightKey as String: Int(size.height)])
         writer.add(videoInput)
 
-        let asset = AVAsset(url: audioURL)
-        guard let audioTrack = asset.tracks(withMediaType: .audio).first else { throw ExportError.cannotReadAudio }
+        let mixedAudio: BackgroundAudioMixResult
+        do {
+            mixedAudio = try BackgroundAudioMixer.make(
+                mainAudioURL: audioURL,
+                backgrounds: backgrounds,
+                projectDuration: duration,
+                backgroundAudioEnabled: backgroundAudioEnabled,
+                backgroundVolume: backgroundAudioVolume,
+                transitionDuration: settings.backgroundTransitionDuration
+            )
+        } catch {
+            throw ExportError.cannotReadAudio
+        }
         let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVNumberOfChannelsKey: 2, AVSampleRateKey: 44_100, AVEncoderBitRateKey: 192_000])
         writer.add(audioInput)
-        let reader = try AVAssetReader(asset: asset)
-        let audioOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMIsFloatKey: false, AVLinearPCMBitDepthKey: 16])
+        let reader = try AVAssetReader(asset: mixedAudio.composition)
+        let audioTracks = mixedAudio.composition.tracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else { throw ExportError.cannotReadAudio }
+        let audioOutput = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: [AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMIsFloatKey: false, AVLinearPCMBitDepthKey: 16])
+        audioOutput.audioMix = mixedAudio.audioMix
         audioOutput.alwaysCopiesSampleData = false
         reader.add(audioOutput)
         guard writer.startWriting() else { throw writer.error ?? ExportError.failedToWrite }

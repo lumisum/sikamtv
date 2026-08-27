@@ -33,6 +33,14 @@ struct BackgroundMedia: Sendable {
     let url: URL
     let kind: MediaKind
     let duration: Double
+    let hasAudio: Bool
+
+    init(url: URL, kind: MediaKind, duration: Double, hasAudio: Bool = false) {
+        self.url = url
+        self.kind = kind
+        self.duration = duration
+        self.hasAudio = hasAudio
+    }
 
     /// Videos loop inside their assigned timeline segment. For a single video,
     /// that segment spans the full song, so the background repeats until export ends.

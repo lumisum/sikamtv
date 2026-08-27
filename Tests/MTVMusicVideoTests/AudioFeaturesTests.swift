@@ -61,6 +61,34 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertGreaterThan(result.bass.max() ?? 0, 0.1)
     }
 
+    func testBackgroundAudioLoopUsesTheSameCrossfadeCadenceAsVideo() {
+        let clips = BackgroundAudioMixer.singleVideoLoopClips(videoDuration: 12, projectDuration: 30, transitionDuration: 1)
+
+        XCTAssertEqual(clips.map(\.destinationStart), [0, 11, 22])
+        XCTAssertEqual(clips[0].fadeIn, 0)
+        XCTAssertEqual(clips[0].fadeOut, 1)
+        XCTAssertEqual(clips[1].fadeIn, 1)
+        XCTAssertEqual(clips[1].fadeOut, 1)
+    }
+
+    func testBackgroundAudioMixerAddsVideoAudioOnlyWhenEnabled() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sikamtv-mix-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let mainURL = root.appendingPathComponent("main.caf")
+        let backgroundURL = root.appendingPathComponent("background.caf")
+        try makeAudio(at: mainURL, duration: 1, frequency: 220)
+        try makeAudio(at: backgroundURL, duration: 0.4, frequency: 440)
+        let background = BackgroundMedia(url: backgroundURL, kind: .video, duration: 0.4, hasAudio: true)
+
+        let disabled = try BackgroundAudioMixer.make(mainAudioURL: mainURL, backgrounds: [background], projectDuration: 1, backgroundAudioEnabled: false, backgroundVolume: 0.25, transitionDuration: 0.1)
+        let enabled = try BackgroundAudioMixer.make(mainAudioURL: mainURL, backgrounds: [background], projectDuration: 1, backgroundAudioEnabled: true, backgroundVolume: 0.25, transitionDuration: 0.1)
+
+        XCTAssertEqual(disabled.composition.tracks(withMediaType: .audio).count, 1)
+        XCTAssertEqual(enabled.composition.tracks(withMediaType: .audio).count, 3)
+        XCTAssertEqual(enabled.audioMix.inputParameters.count, 3)
+    }
+
     private func makeAnalysis(frameCount: Int) -> AudioAnalysis {
         AudioAnalysis(
             duration: Double(frameCount) / 30,
@@ -74,5 +102,21 @@ final class AudioFeaturesTests: XCTestCase {
             spectrum: Array(repeating: Array(repeating: 0.45, count: 96), count: frameCount),
             waveform: Array(repeating: (0..<128).map { sin(Float($0) * 0.18) * 0.7 }, count: frameCount)
         )
+    }
+
+    private func makeAudio(at url: URL, duration: Double, frequency: Double) throws {
+        let sampleRate = 44_100.0
+        let count = Int(sampleRate * duration)
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count))!
+        buffer.frameLength = AVAudioFrameCount(count)
+        for channel in 0..<2 {
+            let samples = buffer.floatChannelData![channel]
+            for index in 0..<count {
+                samples[index] = sin(Float(Double(index) / sampleRate * 2 * .pi * frequency)) * 0.2
+            }
+        }
+        try file.write(from: buffer)
     }
 }
