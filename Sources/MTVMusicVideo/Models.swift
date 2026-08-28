@@ -339,7 +339,21 @@ enum IntroAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendable 
     var id: String { rawValue }
 }
 
+enum SmartVisualMood: String, CaseIterable, Identifiable, Codable, Sendable {
+    case automatic = "自动"
+    case natural = "自然"
+    case ethereal = "空灵"
+    case cinema = "电影"
+    case vivid = "炫丽"
+
+    var id: String { rawValue }
+}
+
 struct RenderSettings: Codable, Equatable, Sendable {
+    var smartDirectorEnabled: Bool = true
+    var smartVisualMood: SmartVisualMood = .automatic
+    var smartOverallIntensity: Double = 0.62
+    var smartMotionPace: Double = 0.48
     var aspectRatio: AspectRatio = .portrait
     var template: VisualTemplate = .ethereal
     var visualizer: VisualizerKind = .aurora
@@ -360,6 +374,8 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var backgroundParallax: Double = 0.22
     var backgroundLightFlow: Double = 0.12
     var backgroundSubjectProtection: Double = 0.82
+    var smartCompositionEnabled: Bool = true
+    var subjectEdgeLight: Double = 0.34
 
     var visualizerStrength: Double = 0.86
     var visualizerPositionY: Double = 0.31
@@ -398,10 +414,12 @@ struct RenderSettings: Codable, Equatable, Sendable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
+        case smartDirectorEnabled, smartVisualMood, smartOverallIntensity, smartMotionPace
         case aspectRatio, template, visualizer, blur, smartBlurEnabled, darkness, saturation
         case backgroundOverlayRed, backgroundOverlayGreen, backgroundOverlayBlue, backgroundOverlayOpacity
         case backgroundTransition, backgroundTransitionDuration, backgroundMotionStyle
         case backgroundLife, backgroundCameraMotion, backgroundAudioWarp, backgroundParallax, backgroundLightFlow, backgroundSubjectProtection
+        case smartCompositionEnabled, subjectEdgeLight
         case visualizerStrength, visualizerPositionY, visualizerScale, visualizerGlow, visualizerSmoothing, visualizerDensity
         case visualizerBrilliance, visualizerIntegration, visualizerTrail, visualizerColorRichness, visualizerDepth, visualizerBeatImpact, musicAwareness
         case lyricSize, lyricPositionY, lyricWidth, lyricLineSpacing, lyricInactiveOpacity, lyricGlow, lyricAnimationDuration
@@ -412,6 +430,10 @@ struct RenderSettings: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = RenderSettings()
+        smartDirectorEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartDirectorEnabled) ?? defaults.smartDirectorEnabled
+        smartVisualMood = try container.decodeIfPresent(SmartVisualMood.self, forKey: .smartVisualMood) ?? defaults.smartVisualMood
+        smartOverallIntensity = try container.decodeIfPresent(Double.self, forKey: .smartOverallIntensity) ?? defaults.smartOverallIntensity
+        smartMotionPace = try container.decodeIfPresent(Double.self, forKey: .smartMotionPace) ?? defaults.smartMotionPace
         aspectRatio = try container.decodeIfPresent(AspectRatio.self, forKey: .aspectRatio) ?? defaults.aspectRatio
         template = try container.decodeIfPresent(VisualTemplate.self, forKey: .template) ?? defaults.template
         visualizer = try container.decodeIfPresent(VisualizerKind.self, forKey: .visualizer) ?? defaults.visualizer
@@ -432,6 +454,8 @@ struct RenderSettings: Codable, Equatable, Sendable {
         backgroundParallax = try container.decodeIfPresent(Double.self, forKey: .backgroundParallax) ?? defaults.backgroundParallax
         backgroundLightFlow = try container.decodeIfPresent(Double.self, forKey: .backgroundLightFlow) ?? defaults.backgroundLightFlow
         backgroundSubjectProtection = try container.decodeIfPresent(Double.self, forKey: .backgroundSubjectProtection) ?? defaults.backgroundSubjectProtection
+        smartCompositionEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartCompositionEnabled) ?? defaults.smartCompositionEnabled
+        subjectEdgeLight = try container.decodeIfPresent(Double.self, forKey: .subjectEdgeLight) ?? defaults.subjectEdgeLight
         visualizerStrength = try container.decodeIfPresent(Double.self, forKey: .visualizerStrength) ?? defaults.visualizerStrength
         visualizerPositionY = try container.decodeIfPresent(Double.self, forKey: .visualizerPositionY) ?? defaults.visualizerPositionY
         visualizerScale = try container.decodeIfPresent(Double.self, forKey: .visualizerScale) ?? defaults.visualizerScale
@@ -467,6 +491,10 @@ struct RenderSettings: Codable, Equatable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(smartDirectorEnabled, forKey: .smartDirectorEnabled)
+        try container.encode(smartVisualMood, forKey: .smartVisualMood)
+        try container.encode(smartOverallIntensity, forKey: .smartOverallIntensity)
+        try container.encode(smartMotionPace, forKey: .smartMotionPace)
         try container.encode(aspectRatio, forKey: .aspectRatio)
         try container.encode(template, forKey: .template)
         try container.encode(visualizer, forKey: .visualizer)
@@ -487,6 +515,8 @@ struct RenderSettings: Codable, Equatable, Sendable {
         try container.encode(backgroundParallax, forKey: .backgroundParallax)
         try container.encode(backgroundLightFlow, forKey: .backgroundLightFlow)
         try container.encode(backgroundSubjectProtection, forKey: .backgroundSubjectProtection)
+        try container.encode(smartCompositionEnabled, forKey: .smartCompositionEnabled)
+        try container.encode(subjectEdgeLight, forKey: .subjectEdgeLight)
         try container.encode(visualizerStrength, forKey: .visualizerStrength)
         try container.encode(visualizerPositionY, forKey: .visualizerPositionY)
         try container.encode(visualizerScale, forKey: .visualizerScale)

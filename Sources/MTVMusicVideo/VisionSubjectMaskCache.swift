@@ -3,6 +3,19 @@ import Foundation
 import ImageIO
 import Vision
 
+struct VisionLayoutProfile: Sendable, Equatable {
+    let subjectBounds: CGRect
+    let subjectCenter: CGPoint
+    let coverage: CGFloat
+
+    var supportsSpatialComposition: Bool {
+        coverage >= 0.015
+            && coverage <= 0.68
+            && subjectBounds.width <= 0.94
+            && subjectBounds.height <= 0.94
+    }
+}
+
 /// Builds a reusable protection mask for each imported still image. Vision runs
 /// once during import (or lazily on the first render), never in the frame loop.
 final class VisionSubjectMaskCache: @unchecked Sendable {
@@ -10,6 +23,8 @@ final class VisionSubjectMaskCache: @unchecked Sendable {
 
     private let lock = NSLock()
     private var memory: [String: CGImage] = [:]
+    private var profiles: [String: VisionLayoutProfile] = [:]
+    private var profileMisses: Set<String> = []
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private let maskSize = 256
 
@@ -34,12 +49,47 @@ final class VisionSubjectMaskCache: @unchecked Sendable {
         return mask
     }
 
+    func layoutProfile(for identifier: String?, image: CGImage) -> VisionLayoutProfile? {
+        guard let identifier else { return nil }
+        let key = cacheKey(for: URL(fileURLWithPath: identifier))
+        lock.lock()
+        if let profile = profiles[key] {
+            lock.unlock()
+            return profile
+        }
+        if profileMisses.contains(key) {
+            lock.unlock()
+            return nil
+        }
+        lock.unlock()
+        guard let mask = mask(for: identifier, image: image), let profile = Self.layoutProfile(from: mask) else {
+            lock.lock()
+            profileMisses.insert(key)
+            lock.unlock()
+            return nil
+        }
+        lock.lock()
+        profiles[key] = profile
+        lock.unlock()
+        return profile
+    }
+
     private func analyze(_ image: CGImage, orientation: CGImagePropertyOrientation) -> CGImage? {
         let saliency = VNGenerateAttentionBasedSaliencyImageRequest()
         let faces = VNDetectFaceRectanglesRequest()
         let handler = VNImageRequestHandler(cgImage: image, orientation: orientation)
-        try? handler.perform([saliency, faces])
-        let saliencyImage = saliency.results?.first.flatMap { saliencyCGImage(from: $0.pixelBuffer) }
+        var foregroundImage: CGImage?
+        if #available(macOS 14.0, *) {
+            let foreground = VNGenerateForegroundInstanceMaskRequest()
+            try? handler.perform([foreground, saliency, faces])
+            if let observation = foreground.results?.first,
+               let buffer = try? observation.generateScaledMaskForImage(forInstances: observation.allInstances, from: handler) {
+                foregroundImage = saliencyCGImage(from: buffer)
+            }
+        } else {
+            try? handler.perform([saliency, faces])
+        }
+        let saliencyImage = foregroundImage ?? saliency.results?.first.flatMap { saliencyCGImage(from: $0.pixelBuffer) }
         return composeMask(saliencyImage: saliencyImage, faceBoxes: (faces.results ?? []).map(\.boundingBox))
     }
 
@@ -90,6 +140,60 @@ final class VisionSubjectMaskCache: @unchecked Sendable {
             .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 7.5])
             .cropped(to: input.extent)
         return ciContext.createCGImage(softened, from: input.extent)
+    }
+
+    static func layoutProfile(from mask: CGImage) -> VisionLayoutProfile? {
+        let width = mask.width
+        let height = mask.height
+        guard width > 0, height > 0 else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        let rendered = pixels.withUnsafeMutableBytes { raw -> Bool in
+            guard let base = raw.baseAddress,
+                  let context = CGContext(
+                    data: base,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: width,
+                    space: CGColorSpaceCreateDeviceGray(),
+                    bitmapInfo: CGImageAlphaInfo.none.rawValue
+                  ) else { return false }
+            context.draw(mask, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return nil }
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+        var weightedX: CGFloat = 0
+        var weightedY: CGFloat = 0
+        var totalWeight: CGFloat = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let value = CGFloat(pixels[y * width + x]) / 255
+                guard value > 0.18 else { continue }
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+                weightedX += CGFloat(x) * value
+                weightedY += CGFloat(y) * value
+                totalWeight += value
+            }
+        }
+        guard maxX >= minX, maxY >= minY, totalWeight > CGFloat(width * height) * 0.008 else { return nil }
+        let bounds = CGRect(
+            x: CGFloat(minX) / CGFloat(width),
+            y: 1 - CGFloat(maxY + 1) / CGFloat(height),
+            width: CGFloat(maxX - minX + 1) / CGFloat(width),
+            height: CGFloat(maxY - minY + 1) / CGFloat(height)
+        )
+        return VisionLayoutProfile(
+            subjectBounds: bounds,
+            subjectCenter: CGPoint(x: weightedX / totalWeight / CGFloat(width), y: 1 - weightedY / totalWeight / CGFloat(height)),
+            coverage: min(1, totalWeight / CGFloat(width * height))
+        )
     }
 
     private func imageOrientation(source: CGImageSource) -> CGImagePropertyOrientation {
@@ -145,7 +249,7 @@ final class VisionSubjectMaskCache: @unchecked Sendable {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = attributes?[.size] as? NSNumber
         let modified = attributes?[.modificationDate] as? Date
-        let identity = "\(url.standardizedFileURL.path)|\(size?.int64Value ?? 0)|\(modified?.timeIntervalSince1970 ?? 0)|vision-mask-v1"
+        let identity = "\(url.standardizedFileURL.path)|\(size?.int64Value ?? 0)|\(modified?.timeIntervalSince1970 ?? 0)|vision-mask-v2"
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in identity.utf8 { hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211 }
         return String(hash, radix: 16)

@@ -9,7 +9,7 @@ struct VisualizerEngine {
         features: AudioFrameFeatures,
         settings: RenderSettings,
         time: Double,
-        template: VisualTemplate,
+        palette: VisualPalette,
         staticBackground: Bool
     ) -> VisualizerMesh {
         var mesh = VisualizerMesh()
@@ -50,7 +50,6 @@ struct VisualizerEngine {
             x: desiredCenter.x,
             y: min(size.height - verticalFootprint, max(verticalFootprint, desiredCenter.y))
         )
-        let palette = template.palette
         appendAmbientScene(
             &mesh,
             size: size,

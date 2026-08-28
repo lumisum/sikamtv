@@ -136,6 +136,7 @@ final class RenderEngineTests: XCTestCase {
         )
         let engine = RenderEngine()
         var still = RenderSettings()
+        still.smartDirectorEnabled = false
         still.aspectRatio = .landscape
         still.blur = 0
         still.darkness = 0
@@ -172,6 +173,7 @@ final class RenderEngineTests: XCTestCase {
         )
         let engine = RenderEngine()
         var settings = RenderSettings()
+        settings.smartDirectorEnabled = false
         let requestedSize = CGSize(width: 270, height: 480)
 
         var rendered: [(VisualizerKind, CGImage)] = []
@@ -206,6 +208,7 @@ final class RenderEngineTests: XCTestCase {
         )
         let engine = RenderEngine()
         var plain = RenderSettings()
+        plain.smartDirectorEnabled = false
         plain.aspectRatio = .landscape
         plain.blur = 0
         plain.visualizerBrilliance = 0
@@ -255,6 +258,7 @@ final class RenderEngineTests: XCTestCase {
         )
         let engine = RenderEngine()
         var unaware = RenderSettings()
+        unaware.smartDirectorEnabled = false
         unaware.aspectRatio = .landscape
         unaware.musicAwareness = 0
         var aware = unaware
@@ -382,11 +386,11 @@ final class RenderEngineTests: XCTestCase {
         let size = AspectRatio.portrait.realtimePreviewSize
         let lyrics = [LRCLine(time: 0, text: "性能优先，实时清晰")]
 
-        _ = engine.render(size: size, time: 0, settings: settings, background: background, backgroundDuration: 10, lyrics: lyrics, analysis: nil, fontName: "PingFangSC-Regular")
+        _ = engine.render(size: size, time: 0, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "performance-static", lyrics: lyrics, analysis: nil, fontName: "PingFangSC-Regular")
         let frameCount = 12
         let start = CFAbsoluteTimeGetCurrent()
         for frame in 0..<frameCount {
-            XCTAssertNotNil(engine.render(size: size, time: Double(frame) / 30, settings: settings, background: background, backgroundDuration: 10, lyrics: lyrics, analysis: nil, fontName: "PingFangSC-Regular"))
+            XCTAssertNotNil(engine.render(size: size, time: Double(frame) / 30, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "performance-static", lyrics: lyrics, analysis: nil, fontName: "PingFangSC-Regular"))
         }
         let averageMilliseconds = (CFAbsoluteTimeGetCurrent() - start) * 1_000 / Double(frameCount)
         XCTAssertLessThan(averageMilliseconds, 33.3, "Realtime preview averaged \(averageMilliseconds) ms per frame")
@@ -401,6 +405,7 @@ final class RenderEngineTests: XCTestCase {
         settings.saturation = 1
         settings.visualizerGlow = 0
         settings.visualizerStrength = 0
+        settings.smartCompositionEnabled = false
         settings.template = .minimal
 
         let image = try XCTUnwrap(engine.render(
@@ -427,6 +432,7 @@ final class RenderEngineTests: XCTestCase {
         let background = try XCTUnwrap(makeSolidBackground(gray: 0.62, width: 480, height: 270))
         let engine = RenderEngine()
         var settings = RenderSettings()
+        settings.smartDirectorEnabled = false
         settings.aspectRatio = .landscape
         settings.blur = 0
         settings.darkness = 0
@@ -465,6 +471,74 @@ final class RenderEngineTests: XCTestCase {
         XCTAssertGreaterThan(environment.red, center.red + 0.18, "The same edge outside the subject mask should remain softly blurred")
     }
 
+    func testSmartCompositionMovesLyricsAndVisualizerAwayFromTheSubject() {
+        var settings = RenderSettings()
+        settings.visualizerPositionY = 0.48
+        settings.lyricPositionY = 0.60
+        let profile = VisionLayoutProfile(
+            subjectBounds: CGRect(x: 0.18, y: 0.46, width: 0.64, height: 0.48),
+            subjectCenter: CGPoint(x: 0.5, y: 0.68),
+            coverage: 0.32
+        )
+        let composed = RenderEngine.smartCompositionSettings(settings, profile: profile, time: 20)
+        XCTAssertEqual(composed.visualizerPositionY, 0.24, accuracy: 0.001)
+        XCTAssertEqual(composed.lyricPositionY, 0.44, accuracy: 0.001)
+    }
+
+    func testSubjectLayeringPlacesTheVisualizerBehindTheForeground() throws {
+        let renderer = try XCTUnwrap(MetalRenderer())
+        let size = CGSize(width: 120, height: 120)
+        let background = try XCTUnwrap(makeSolidColorBackground(red: 0.05, green: 0.16, blue: 0.92, width: 120, height: 120))
+        let mask = try XCTUnwrap(makeCenterProtectionMask(width: 120, height: 120))
+        let backgroundTexture = try XCTUnwrap(renderer.makeTexture(width: 120, height: 120))
+        let maskTexture = try XCTUnwrap(renderer.makeTexture(width: 120, height: 120))
+        renderer.renderCIImage(CIImage(cgImage: background), to: backgroundTexture)
+        renderer.renderCIImage(CIImage(cgImage: mask), to: maskTexture)
+        let layer = MetalRenderer.TextureLayer(
+            texture: backgroundTexture,
+            rect: CGRect(origin: .zero, size: size),
+            alpha: 1,
+            backgroundReactivity: 0,
+            subjectMask: maskTexture
+        )
+        let red = SIMD4<Float>(0.82, 0.02, 0.02, 0.84)
+        let mesh = VisualizerMesh(soft: [
+            GPUVertex(position: SIMD2(0, 0), uv: .zero, color: red),
+            GPUVertex(position: SIMD2(120, 0), uv: .zero, color: red),
+            GPUVertex(position: SIMD2(120, 120), uv: .zero, color: red),
+            GPUVertex(position: SIMD2(0, 0), uv: .zero, color: red),
+            GPUVertex(position: SIMD2(120, 120), uv: .zero, color: red),
+            GPUVertex(position: SIMD2(0, 120), uv: .zero, color: red)
+        ])
+        let post = PostProcessSettings(
+            time: 1, center: SIMD2(0.5, 0.5), bass: 0, mid: 0, high: 0, beat: 0,
+            integration: 0, brilliance: 0, trail: 0, colorRichness: 1, depth: 0, beatImpact: 0,
+            energy: 0, transient: 0, buildup: 0, climax: 0, quiet: 1, warmth: 0.5,
+            sectionProgress: 0, musicAwareness: 0
+        )
+        func motion(enabled: Bool) -> BackgroundMotionSettings {
+            BackgroundMotionSettings(
+                time: 1, center: SIMD2(0.5, 0.5), features: .silent, style: .off,
+                life: 0, camera: 0, warp: 0, parallax: 0, lightFlow: 0,
+                subjectProtection: 1, awareness: 0, smartCompositionEnabled: enabled, edgeLight: 0
+            )
+        }
+        let plainBuffer = try XCTUnwrap(makePixelBuffer(width: 120, height: 120))
+        XCTAssertTrue(renderer.renderToPixelBuffer(plainBuffer, size: size, backgrounds: [layer], placeholder: [], darkness: 0, vignetteAlpha: 0, accentWash: .zero, mesh: mesh, title: nil, lyrics: nil, backgroundMotion: motion(enabled: false), postProcess: post))
+        let plain = try XCTUnwrap(cgImage(from: plainBuffer))
+        let layeredBuffer = try XCTUnwrap(makePixelBuffer(width: 120, height: 120))
+        XCTAssertTrue(renderer.renderToPixelBuffer(layeredBuffer, size: size, backgrounds: [layer], placeholder: [], darkness: 0, vignetteAlpha: 0, accentWash: .zero, mesh: mesh, title: nil, lyrics: nil, backgroundMotion: motion(enabled: true), postProcess: post))
+        let layered = try XCTUnwrap(cgImage(from: layeredBuffer))
+        let plainCenter = sample(plain, xRatio: 0.5, yRatio: 0.5)
+        let layeredCenter = sample(layered, xRatio: 0.5, yRatio: 0.5)
+        let plainCorner = sample(plain, xRatio: 0.08, yRatio: 0.08)
+        let layeredCorner = sample(layered, xRatio: 0.08, yRatio: 0.08)
+        XCTAssertGreaterThan(layeredCenter.blue, plainCenter.blue + 0.22, "The subject should cover the visualizer in the protected region")
+        XCTAssertLessThan(layeredCenter.red, plainCenter.red - 0.20)
+        let cornerDifference = abs(plainCorner.red - layeredCorner.red) + abs(plainCorner.green - layeredCorner.green) + abs(plainCorner.blue - layeredCorner.blue)
+        XCTAssertLessThan(cornerDifference, 0.04, "The depth reorder should leave the unmasked environment unchanged")
+    }
+
     func testPreviewAndExportKeepBackgroundAndLyricsUpright() throws {
         let background = try XCTUnwrap(makeBandedBackground(width: 640, height: 360))
         let engine = RenderEngine()
@@ -474,6 +548,7 @@ final class RenderEngineTests: XCTestCase {
         settings.saturation = 1
         settings.visualizerGlow = 0
         settings.visualizerStrength = 0
+        settings.smartCompositionEnabled = false
         settings.template = .minimal
         settings.lyricPositionY = 0.82
         settings.lyricGlow = 0
@@ -594,6 +669,31 @@ final class RenderEngineTests: XCTestCase {
         context.setFillColor(CGColor(gray: 1, alpha: 1))
         context.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
         return context.makeImage()
+    }
+
+    private func makeSolidColorBackground(red: CGFloat, green: CGFloat, blue: CGFloat, width: Int, height: Int) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.setFillColor(CGColor(red: red, green: green, blue: blue, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
+    private func makePixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+        var buffer: CVPixelBuffer?
+        let attrs = [
+            kCVPixelBufferMetalCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:]
+        ] as CFDictionary
+        guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs, &buffer) == kCVReturnSuccess else { return nil }
+        return buffer
     }
 
     private func makeCenterProtectionMask(width: Int, height: Int) -> CGImage? {

@@ -28,6 +28,10 @@ final class AudioFeaturesTests: XCTestCase {
 
     func testSettingsRoundTripIncludesLyricAndVisualizerControls() throws {
         var settings = RenderSettings()
+        settings.smartDirectorEnabled = false
+        settings.smartVisualMood = .cinema
+        settings.smartOverallIntensity = 0.81
+        settings.smartMotionPace = 0.69
         settings.lyricAnimation = .scale
         settings.lyricAlignment = .leading
         settings.lyricPositionY = 0.71
@@ -38,6 +42,8 @@ final class AudioFeaturesTests: XCTestCase {
         settings.backgroundMotionStyle = .liquid
         settings.backgroundLife = 0.77
         settings.smartBlurEnabled = false
+        settings.smartCompositionEnabled = false
+        settings.subjectEdgeLight = 0.68
         settings.backgroundOverlayRed = 0.18
         settings.backgroundOverlayGreen = 0.42
         settings.backgroundOverlayBlue = 0.76
@@ -66,6 +72,12 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.backgroundLife, RenderSettings().backgroundLife)
         XCTAssertEqual(settings.backgroundOverlayOpacity, 0)
         XCTAssertTrue(settings.smartBlurEnabled)
+        XCTAssertTrue(settings.smartDirectorEnabled)
+        XCTAssertEqual(settings.smartVisualMood, .automatic)
+        XCTAssertEqual(settings.smartOverallIntensity, RenderSettings().smartOverallIntensity)
+        XCTAssertEqual(settings.smartMotionPace, RenderSettings().smartMotionPace)
+        XCTAssertTrue(settings.smartCompositionEnabled)
+        XCTAssertEqual(settings.subjectEdgeLight, RenderSettings().subjectEdgeLight)
         XCTAssertEqual(settings.introDuration, 12)
         XCTAssertEqual(settings.introTitleSize, 72)
         XCTAssertTrue(settings.introEnabled)

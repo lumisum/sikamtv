@@ -398,6 +398,8 @@ final class WorkspaceState: ObservableObject {
         updated.backgroundParallax = defaults.backgroundParallax
         updated.backgroundLightFlow = defaults.backgroundLightFlow
         updated.backgroundSubjectProtection = defaults.backgroundSubjectProtection
+        updated.smartCompositionEnabled = defaults.smartCompositionEnabled
+        updated.subjectEdgeLight = defaults.subjectEdgeLight
         settings = updated
     }
 

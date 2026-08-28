@@ -102,6 +102,8 @@ enum MetalShaders {
         float warmth = motion.clock.z;
         float awareness = motion.clock.w;
         float hasVisionMask = motion.mask.x;
+        float subjectMode = motion.mask.y;
+        float edgeLightStrength = motion.mask.z;
 
         // Stable camera breathing: low frequencies and the long-form energy arc
         // influence scale and drift without tying position directly to loudness.
@@ -152,6 +154,24 @@ enum MetalShaders {
         color += (1.0 - color) * lightTint * max(0.0, light);
         color *= 1.0 - max(0.0, -light) * 0.42;
         color += (1.0 - color) * transient * life * awareness * 0.010 * motionMask;
+        if (subjectMode > 0.5) {
+            float subject = subjectMaskTexture.sample(samp, uv).r;
+            if (subjectMode < 1.5) {
+                float alpha = smoothstep(0.16, 0.76, subject) * in.color.a;
+                return float4(clamp(color, 0.0, 1.0) * alpha, alpha);
+            }
+            float2 texel = 1.0 / float2(subjectMaskTexture.get_width(), subjectMaskTexture.get_height());
+            float gx = subjectMaskTexture.sample(samp, clamp(uv + float2(texel.x, 0.0), float2(0.002), float2(0.998))).r
+                     - subjectMaskTexture.sample(samp, clamp(uv - float2(texel.x, 0.0), float2(0.002), float2(0.998))).r;
+            float gy = subjectMaskTexture.sample(samp, clamp(uv + float2(0.0, texel.y), float2(0.002), float2(0.998))).r
+                     - subjectMaskTexture.sample(samp, clamp(uv - float2(0.0, texel.y), float2(0.002), float2(0.998))).r;
+            float edge = smoothstep(0.025, 0.32, length(float2(gx, gy))) * (1.0 - smoothstep(0.82, 1.0, subject));
+            float pulse = 0.055 + energy * 0.060 + buildup * 0.045 + climax * 0.085 + transient * 0.10;
+            float alpha = edge * edgeLightStrength * pulse * in.color.a;
+            float3 sampledTint = tex.sample(samp, clamp(uv + normalize(float2(gx, gy) + 0.0001) * texel * 2.0, float2(0.002), float2(0.998))).rgb;
+            float3 edgeTint = mix(sampledTint, float3(1.0), 0.38 + high * 0.18);
+            return float4(edgeTint * alpha, alpha);
+        }
         return float4(clamp(color, 0.0, 1.0) * in.color.a, in.color.a);
     }
 
@@ -329,8 +349,10 @@ struct BackgroundMotionSettings {
     let lightFlow: Float
     let subjectProtection: Float
     let awareness: Float
+    let smartCompositionEnabled: Bool
+    let edgeLight: Float
 
-    func uniforms(size: CGSize, reactivity: Float, hasVisionMask: Bool) -> GPUBackgroundUniforms {
+    func uniforms(size: CGSize, reactivity: Float, hasVisionMask: Bool, subjectMode: Float = 0) -> GPUBackgroundUniforms {
         let styleValue: Float
         switch style {
         case .natural: styleValue = 0
@@ -346,7 +368,7 @@ struct BackgroundMotionSettings {
             controls: SIMD4(enabledLife, camera, warp, parallax),
             mode: SIMD4(lightFlow, subjectProtection, styleValue, reactivity),
             clock: SIMD4(Float(time), features.sectionProgress, features.warmth, awareness),
-            mask: SIMD4(hasVisionMask ? 1 : 0, 0, 0, 0)
+            mask: SIMD4(hasVisionMask ? 1 : 0, subjectMode, edgeLight, 0)
         )
     }
 }

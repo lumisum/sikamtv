@@ -29,6 +29,7 @@ final class MetalRenderer {
     private let radialPipeline: MTLRenderPipelineState
     private let texturePipeline: MTLRenderPipelineState
     private let backgroundPipeline: MTLRenderPipelineState
+    private let backgroundAdditivePipeline: MTLRenderPipelineState
     private let vignettePipeline: MTLRenderPipelineState
     private let postPipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
@@ -91,6 +92,7 @@ final class MetalRenderer {
               let radialPipeline = pipeline("fragment_radial", blend: additive),
               let texturePipeline = pipeline("fragment_texture", blend: alpha),
               let backgroundPipeline = pipeline("fragment_background", blend: alpha),
+              let backgroundAdditivePipeline = pipeline("fragment_background", blend: additive),
               let vignettePipeline = pipeline("fragment_vignette", blend: alpha),
               let postPipeline = pipeline("fragment_post", blend: replace) else { return nil }
         self.colorPipeline = colorPipeline
@@ -98,6 +100,7 @@ final class MetalRenderer {
         self.radialPipeline = radialPipeline
         self.texturePipeline = texturePipeline
         self.backgroundPipeline = backgroundPipeline
+        self.backgroundAdditivePipeline = backgroundAdditivePipeline
         self.vignettePipeline = vignettePipeline
         self.postPipeline = postPipeline
 
@@ -154,6 +157,7 @@ final class MetalRenderer {
                 + mesh.soft.count
                 + mesh.radials.count
                 + mesh.additive.count
+                + backgrounds.filter { $0.subjectMask != nil && backgroundMotion.smartCompositionEnabled }.count * 12
                 + 6
                 + (title == nil ? 0 : 6)
                 + (lyrics == nil ? 0 : 6)
@@ -223,6 +227,16 @@ final class MetalRenderer {
         }
         if !mesh.additive.isEmpty {
             draw(mesh.additive, pipeline: additiveColorPipeline, encoder: encoder)
+        }
+        if backgroundMotion.smartCompositionEnabled {
+            for layer in backgrounds where layer.subjectMask != nil {
+                drawTexturedQuad(layer, encoder: encoder, backgroundMotion: backgroundMotion, size: size, subjectMode: 1)
+            }
+            if backgroundMotion.edgeLight > 0.001 {
+                for layer in backgrounds where layer.subjectMask != nil {
+                    drawTexturedQuad(layer, encoder: encoder, backgroundMotion: backgroundMotion, size: size, subjectMode: 2)
+                }
+            }
         }
         encoder.endEncoding()
 
@@ -361,7 +375,7 @@ final class MetalRenderer {
         ], pipeline: pipeline, encoder: encoder)
     }
 
-    private func drawTexturedQuad(_ layer: TextureLayer, encoder: MTLRenderCommandEncoder, backgroundMotion: BackgroundMotionSettings? = nil, size: CGSize = .zero) {
+    private func drawTexturedQuad(_ layer: TextureLayer, encoder: MTLRenderCommandEncoder, backgroundMotion: BackgroundMotionSettings? = nil, size: CGSize = .zero, subjectMode: Float = 0) {
         let rect = layer.rect
         let color = SIMD4<Float>(1, 1, 1, layer.alpha)
         let vertices = [
@@ -372,11 +386,11 @@ final class MetalRenderer {
             GPUVertex(position: SIMD2(Float(rect.maxX), Float(rect.maxY)), uv: SIMD2(1, 1), color: color),
             GPUVertex(position: SIMD2(Float(rect.minX), Float(rect.maxY)), uv: SIMD2(0, 1), color: color)
         ]
-        let useBackgroundMotion = layer.backgroundReactivity > 0.001 && backgroundMotion != nil
-        let pipeline = useBackgroundMotion ? backgroundPipeline : texturePipeline
+        let useBackgroundMotion = backgroundMotion != nil && (layer.backgroundReactivity > 0.001 || subjectMode > 0)
+        let pipeline = subjectMode > 1.5 ? backgroundAdditivePipeline : (useBackgroundMotion ? backgroundPipeline : texturePipeline)
         encoder.setRenderPipelineState(pipeline)
         if let backgroundMotion, useBackgroundMotion {
-            var motionUniforms = backgroundMotion.uniforms(size: size, reactivity: layer.backgroundReactivity, hasVisionMask: layer.subjectMask != nil)
+            var motionUniforms = backgroundMotion.uniforms(size: size, reactivity: layer.backgroundReactivity, hasVisionMask: layer.subjectMask != nil, subjectMode: subjectMode)
             encoder.setFragmentBytes(&motionUniforms, length: MemoryLayout<GPUBackgroundUniforms>.stride, index: 0)
             encoder.setFragmentTexture(layer.subjectMask ?? layer.texture, index: 1)
         }

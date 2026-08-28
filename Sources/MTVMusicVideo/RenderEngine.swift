@@ -52,6 +52,8 @@ final class RenderEngine {
     private var backgroundCache: [BackgroundCacheKey: MTLTexture] = [:]
     private var subjectMaskTextures: [String: MTLTexture] = [:]
     private var lyricLuminanceCache: [LyricLuminanceCacheKey: LyricLuminanceSample] = [:]
+    private var sceneColorCache: [String: SceneColorProfile] = [:]
+    private var songProfileCache: [String: SmartSongProfile] = [:]
     private let blurFilter = CIFilter(name: "CIGaussianBlur")
     private let colorFilter = CIFilter(name: "CIColorControls")
     private var lyricTexture: MTLTexture?
@@ -221,49 +223,66 @@ final class RenderEngine {
         analysis: AudioAnalysis?,
         fontName: String
     ) -> PreparedFrame {
+        let sceneProfile = cachedSceneProfile(identifier: backgroundIdentifier, image: background)
+        let songProfile = cachedSongProfile(analysis)
+        let direction = SmartDirector.direct(base: settings, song: songProfile, scene: sceneProfile)
+        var effectiveSettings = direction.settings
+
+        if effectiveSettings.smartCompositionEnabled, let background {
+            let useNext = (backgroundTimeline?.transitionProgress ?? 0) > 0.55 && nextBackgroundDuration <= 0
+            let profileImage = useNext ? (nextBackground ?? background) : background
+            let profileIdentifier = useNext ? (nextBackgroundIdentifier ?? backgroundIdentifier) : backgroundIdentifier
+            let profileDuration = useNext ? nextBackgroundDuration : backgroundDuration
+            if profileDuration <= 0,
+               let profile = VisionSubjectMaskCache.shared.layoutProfile(for: profileIdentifier, image: profileImage),
+               profile.supportsSpatialComposition {
+                effectiveSettings = Self.smartCompositionSettings(effectiveSettings, profile: profile, time: time)
+            }
+        }
+
         var layers: [MetalRenderer.TextureLayer] = []
         var placeholder: [GPUVertex] = []
         if let background {
             let state = backgroundTimeline ?? BackgroundTimelineState(currentIndex: 0, nextIndex: nil, currentLocalTime: time, nextLocalTime: 0, segmentDuration: max(time, 300), transitionProgress: 0)
             let progress = CGFloat(min(1, max(0, state.transitionProgress)))
             if let nextBackground, state.nextIndex != nil {
-                let transition: BackgroundTransition = state.nextIndex == state.currentIndex ? .crossfade : settings.backgroundTransition
+                let transition: BackgroundTransition = state.nextIndex == state.currentIndex ? .crossfade : effectiveSettings.backgroundTransition
                 switch transition {
                 case .crossfade:
-                    appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1, size: size, settings: settings)
-                    appendBackgroundLayer(&layers, image: nextBackground, identifier: nextBackgroundIdentifier, mediaDuration: nextBackgroundDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: progress, offsetX: 0, extraZoom: 1, size: size, settings: settings)
+                    appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1, size: size, settings: effectiveSettings)
+                    appendBackgroundLayer(&layers, image: nextBackground, identifier: nextBackgroundIdentifier, mediaDuration: nextBackgroundDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: progress, offsetX: 0, extraZoom: 1, size: size, settings: effectiveSettings)
                 case .slide:
-                    appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: -progress * size.width, extraZoom: 1, size: size, settings: settings)
-                    appendBackgroundLayer(&layers, image: nextBackground, identifier: nextBackgroundIdentifier, mediaDuration: nextBackgroundDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: (1 - progress) * size.width, extraZoom: 1, size: size, settings: settings)
+                    appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: -progress * size.width, extraZoom: 1, size: size, settings: effectiveSettings)
+                    appendBackgroundLayer(&layers, image: nextBackground, identifier: nextBackgroundIdentifier, mediaDuration: nextBackgroundDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: (1 - progress) * size.width, extraZoom: 1, size: size, settings: effectiveSettings)
                 case .zoom:
-                    appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1 + progress * 0.08, size: size, settings: settings)
-                    appendBackgroundLayer(&layers, image: nextBackground, identifier: nextBackgroundIdentifier, mediaDuration: nextBackgroundDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: progress, offsetX: 0, extraZoom: 1.08 - progress * 0.08, size: size, settings: settings)
+                    appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1 + progress * 0.08, size: size, settings: effectiveSettings)
+                    appendBackgroundLayer(&layers, image: nextBackground, identifier: nextBackgroundIdentifier, mediaDuration: nextBackgroundDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: progress, offsetX: 0, extraZoom: 1.08 - progress * 0.08, size: size, settings: effectiveSettings)
                 case .none:
-                    appendBackgroundLayer(&layers, image: nextBackground, identifier: nextBackgroundIdentifier, mediaDuration: nextBackgroundDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1, size: size, settings: settings)
+                    appendBackgroundLayer(&layers, image: nextBackground, identifier: nextBackgroundIdentifier, mediaDuration: nextBackgroundDuration, localTime: state.nextLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1, size: size, settings: effectiveSettings)
                 }
             } else {
-                appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1, size: size, settings: settings)
+                appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1, size: size, settings: effectiveSettings)
             }
         } else {
-            placeholder = visualizerEngine.placeholder(size: size, time: time, palette: settings.template.palette)
+            placeholder = visualizerEngine.placeholder(size: size, time: time, palette: direction.palette)
         }
 
         let features = analysis?.frame(at: time) ?? .silent
-        let directedFeatures = features.directed(amount: Float(settings.musicAwareness))
+        let directedFeatures = features.directed(amount: Float(effectiveSettings.musicAwareness))
         let mesh = visualizerEngine.mesh(
-            kind: settings.visualizer,
+            kind: effectiveSettings.visualizer,
             size: size,
             features: features,
-            settings: settings,
+            settings: effectiveSettings,
             time: time,
-            template: settings.template,
+            palette: direction.palette,
             staticBackground: background != nil && backgroundDuration <= 0
         )
-        let overlayAlpha = Float(min(1, max(0, settings.backgroundOverlayOpacity)))
+        let overlayAlpha = Float(min(1, max(0, effectiveSettings.backgroundOverlayOpacity)))
         let overlay = SIMD4<Float>(
-            Float(min(1, max(0, settings.backgroundOverlayRed))) * overlayAlpha,
-            Float(min(1, max(0, settings.backgroundOverlayGreen))) * overlayAlpha,
-            Float(min(1, max(0, settings.backgroundOverlayBlue))) * overlayAlpha,
+            Float(min(1, max(0, effectiveSettings.backgroundOverlayRed))) * overlayAlpha,
+            Float(min(1, max(0, effectiveSettings.backgroundOverlayGreen))) * overlayAlpha,
+            Float(min(1, max(0, effectiveSettings.backgroundOverlayBlue))) * overlayAlpha,
             overlayAlpha
         )
         let lyricsLayer: MetalRenderer.TextureLayer?
@@ -275,32 +294,33 @@ final class RenderEngine {
                 nextBackgroundIdentifier: nextBackgroundIdentifier,
                 transitionProgress: backgroundTimeline?.transitionProgress ?? 0,
                 size: size,
-                settings: settings
+                settings: effectiveSettings
             )
-            lyricsLayer = makeLyricsLayer(lyrics, size: size, time: time, settings: settings, fontName: fontName, features: features, contrast: lyricContrast)
+            lyricsLayer = makeLyricsLayer(lyrics, size: size, time: time, settings: effectiveSettings, fontName: fontName, features: features, contrast: lyricContrast, palette: direction.palette)
         } else {
             lyricsLayer = nil
         }
         let titleLayer = makeIntroLayer(
             size: size,
             time: time,
-            settings: settings,
+            settings: effectiveSettings,
             fontName: fontName,
-            features: directedFeatures
+            features: directedFeatures,
+            palette: direction.palette
         )
         let postProcess = PostProcessSettings(
             time: time,
-            center: SIMD2(0.5, Float(min(0.92, max(0.08, settings.visualizerPositionY)))),
+            center: SIMD2(0.5, Float(min(0.92, max(0.08, effectiveSettings.visualizerPositionY)))),
             bass: directedFeatures.bass,
             mid: directedFeatures.mid,
             high: directedFeatures.high,
             beat: directedFeatures.beat,
-            integration: Float(settings.visualizerIntegration),
-            brilliance: Float(settings.visualizerBrilliance),
-            trail: Float(settings.visualizerTrail),
-            colorRichness: Float(settings.visualizerColorRichness),
-            depth: Float(settings.visualizerDepth),
-            beatImpact: Float(settings.visualizerBeatImpact),
+            integration: Float(effectiveSettings.visualizerIntegration),
+            brilliance: Float(effectiveSettings.visualizerBrilliance),
+            trail: Float(effectiveSettings.visualizerTrail),
+            colorRichness: Float(effectiveSettings.visualizerColorRichness),
+            depth: Float(effectiveSettings.visualizerDepth),
+            beatImpact: Float(effectiveSettings.visualizerBeatImpact),
             energy: directedFeatures.energy,
             transient: directedFeatures.transient,
             buildup: directedFeatures.buildup,
@@ -308,26 +328,28 @@ final class RenderEngine {
             quiet: directedFeatures.quiet,
             warmth: directedFeatures.warmth,
             sectionProgress: directedFeatures.sectionProgress,
-            musicAwareness: Float(settings.musicAwareness)
+            musicAwareness: Float(effectiveSettings.musicAwareness)
         )
         let backgroundMotion = BackgroundMotionSettings(
             time: time,
-            center: SIMD2(0.5, Float(min(0.92, max(0.08, settings.visualizerPositionY)))),
+            center: SIMD2(0.5, Float(min(0.92, max(0.08, effectiveSettings.visualizerPositionY)))),
             features: directedFeatures,
-            style: settings.backgroundMotionStyle,
-            life: Float(settings.backgroundLife),
-            camera: Float(settings.backgroundCameraMotion),
-            warp: Float(settings.backgroundAudioWarp),
-            parallax: Float(settings.backgroundParallax),
-            lightFlow: Float(settings.backgroundLightFlow),
-            subjectProtection: Float(settings.backgroundSubjectProtection),
-            awareness: Float(settings.musicAwareness)
+            style: effectiveSettings.backgroundMotionStyle,
+            life: Float(effectiveSettings.backgroundLife),
+            camera: Float(effectiveSettings.backgroundCameraMotion),
+            warp: Float(effectiveSettings.backgroundAudioWarp),
+            parallax: Float(effectiveSettings.backgroundParallax),
+            lightFlow: Float(effectiveSettings.backgroundLightFlow),
+            subjectProtection: Float(effectiveSettings.backgroundSubjectProtection),
+            awareness: Float(effectiveSettings.musicAwareness),
+            smartCompositionEnabled: effectiveSettings.smartCompositionEnabled,
+            edgeLight: Float(effectiveSettings.subjectEdgeLight)
         )
         return PreparedFrame(
             backgrounds: layers,
             placeholder: placeholder,
             darkness: 0,
-            vignetteAlpha: Float(min(0.85, settings.darkness * (settings.template == .cinema ? 1.18 : 1.0))),
+            vignetteAlpha: Float(min(0.85, effectiveSettings.darkness * (effectiveSettings.template == .cinema ? 1.18 : 1.0))),
             accentWash: overlay,
             mesh: mesh,
             title: titleLayer,
@@ -335,6 +357,55 @@ final class RenderEngine {
             backgroundMotion: backgroundMotion,
             postProcess: postProcess
         )
+    }
+
+    private func cachedSceneProfile(identifier: String?, image: CGImage?) -> SceneColorProfile? {
+        guard let image else { return nil }
+        let key = identifier ?? "image-\(image.width)x\(image.height)-\(ObjectIdentifier(image).hashValue)"
+        if let cached = sceneColorCache[key] { return cached }
+        guard let profile = SmartDirector.analyzeScene(image) else { return nil }
+        if sceneColorCache.count > 48 { sceneColorCache.removeAll(keepingCapacity: true) }
+        sceneColorCache[key] = profile
+        return profile
+    }
+
+    private func cachedSongProfile(_ analysis: AudioAnalysis?) -> SmartSongProfile {
+        guard let analysis else { return .silent }
+        let key = "\(analysis.version)-\(analysis.duration)-\(analysis.amplitudes.count)-\(analysis.energy.first ?? 0)-\(analysis.energy.last ?? 0)"
+        if let cached = songProfileCache[key] { return cached }
+        let profile = SmartDirector.analyzeSong(analysis)
+        if songProfileCache.count > 12 { songProfileCache.removeAll(keepingCapacity: true) }
+        songProfileCache[key] = profile
+        return profile
+    }
+
+    static func smartCompositionSettings(_ settings: RenderSettings, profile: VisionLayoutProfile, time: Double) -> RenderSettings {
+        var result = settings
+        let subject = profile.subjectBounds.insetBy(dx: -0.035, dy: -0.055)
+        func verticalOverlap(center: Double, halfHeight: Double) -> Double {
+            let lower = max(CGFloat(center - halfHeight), subject.minY)
+            let upper = min(CGFloat(center + halfHeight), subject.maxY)
+            return Double(max(0, upper - lower))
+        }
+
+        let visualCandidates = [0.24, 0.34, 0.48, 0.64]
+        result.visualizerPositionY = visualCandidates.min { first, second in
+            let firstScore = verticalOverlap(center: first, halfHeight: 0.13) * 5.5 + abs(first - settings.visualizerPositionY) * 0.22
+            let secondScore = verticalOverlap(center: second, halfHeight: 0.13) * 5.5 + abs(second - settings.visualizerPositionY) * 0.22
+            return firstScore < secondScore
+        } ?? settings.visualizerPositionY
+
+        let lyricCandidates = [0.76, 0.60, 0.44]
+        result.lyricPositionY = lyricCandidates.min { first, second in
+            func score(_ candidate: Double) -> Double {
+                let subjectPenalty = verticalOverlap(center: candidate, halfHeight: 0.105) * 7.0
+                let visualPenalty = max(0, 0.20 - abs(candidate - result.visualizerPositionY)) * 2.4
+                let introPenalty = time < settings.introDuration && candidate > 0.68 ? 0.34 : 0
+                return subjectPenalty + visualPenalty + abs(candidate - settings.lyricPositionY) * 0.18 + introPenalty
+            }
+            return score(first) < score(second)
+        } ?? settings.lyricPositionY
+        return result
     }
 
     private func appendBackgroundLayer(
@@ -373,7 +444,8 @@ final class RenderEngine {
     private func subjectMaskTexture(for image: CGImage, identifier: String?) -> MTLTexture? {
         guard let identifier else { return nil }
         if let cached = subjectMaskTextures[identifier] { return cached }
-        guard let mask = VisionSubjectMaskCache.shared.mask(for: identifier, image: image),
+        guard VisionSubjectMaskCache.shared.layoutProfile(for: identifier, image: image)?.supportsSpatialComposition == true,
+              let mask = VisionSubjectMaskCache.shared.mask(for: identifier, image: image),
               let texture = metal.makeTexture(width: mask.width, height: mask.height) else { return nil }
         metal.renderCIImage(CIImage(cgImage: mask), to: texture)
         if subjectMaskTextures.count > 32 { subjectMaskTextures.removeAll(keepingCapacity: true) }
@@ -559,7 +631,8 @@ final class RenderEngine {
         time: Double,
         settings: RenderSettings,
         fontName: String,
-        features: AudioFrameFeatures
+        features: AudioFrameFeatures,
+        palette: VisualPalette
     ) -> MetalRenderer.TextureLayer? {
         let title = settings.songTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard settings.introEnabled, !title.isEmpty, time >= 0, time <= settings.introDuration else { return nil }
@@ -592,7 +665,8 @@ final class RenderEngine {
             time: time,
             settings: settings,
             fontName: fontName,
-            features: features
+            features: features,
+            palette: palette
         )
         guard let image = context.makeImage() else { return nil }
         if introTexture?.width != width || introTexture?.height != height {
@@ -612,7 +686,8 @@ final class RenderEngine {
         time: Double,
         settings: RenderSettings,
         fontName: String,
-        features: AudioFrameFeatures
+        features: AudioFrameFeatures,
+        palette: VisualPalette
     ) {
         let landscape = settings.aspectRatio == .landscape
         let renderScale = size.width / max(1, settings.aspectRatio.size1080.width)
@@ -623,7 +698,6 @@ final class RenderEngine {
         let titleY = landscape ? size.height * 0.865 : size.height * 0.885
         let authorY = titleY - titleSize * 1.06
         let dateY = authorY - titleSize * 0.62
-        let palette = settings.template.palette
         let baseGlow = CGFloat(settings.lyricGlow) * renderScale * (18 + CGFloat(features.climax) * 8)
 
         let backdropCenter = CGPoint(
@@ -765,7 +839,7 @@ final class RenderEngine {
         return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
 
-    private func makeLyricsLayer(_ lines: [LRCLine], size: CGSize, time: Double, settings: RenderSettings, fontName: String, features: AudioFrameFeatures, contrast: LyricContrastProfile) -> MetalRenderer.TextureLayer? {
+    private func makeLyricsLayer(_ lines: [LRCLine], size: CGSize, time: Double, settings: RenderSettings, fontName: String, features: AudioFrameFeatures, contrast: LyricContrastProfile, palette: VisualPalette) -> MetalRenderer.TextureLayer? {
         guard LRCParser.currentIndex(at: time, in: lines) != nil else { return nil }
         let renderScale = size.width / max(1, settings.aspectRatio.size1080.width)
         let fontSize = CGFloat(settings.lyricSize) * renderScale
@@ -779,7 +853,7 @@ final class RenderEngine {
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         context.translateBy(x: -clip.minX, y: -clip.minY)
-        drawLyrics(lines, in: context, size: size, time: time, settings: settings, fontName: fontName, features: features, contrast: contrast)
+        drawLyrics(lines, in: context, size: size, time: time, settings: settings, fontName: fontName, features: features, contrast: contrast, palette: palette)
         guard let image = context.makeImage() else { return nil }
         if lyricTexture?.width != width || lyricTexture?.height != height {
             lyricTexture = metal.makeTexture(width: width, height: height)
@@ -795,9 +869,8 @@ final class RenderEngine {
         return CGRect(x: container.midX - fitted.width / 2, y: container.midY - fitted.height / 2, width: fitted.width, height: fitted.height)
     }
 
-    private func drawLyrics(_ lines: [LRCLine], in context: CGContext, size: CGSize, time: Double, settings: RenderSettings, fontName: String, features: AudioFrameFeatures, contrast: LyricContrastProfile) {
+    private func drawLyrics(_ lines: [LRCLine], in context: CGContext, size: CGSize, time: Double, settings: RenderSettings, fontName: String, features: AudioFrameFeatures, contrast: LyricContrastProfile, palette: VisualPalette) {
         guard let current = LRCParser.currentIndex(at: time, in: lines) else { return }
-        let palette = settings.template.palette
         let renderScale = size.width / max(1, settings.aspectRatio.size1080.width)
         let fontSize = CGFloat(settings.lyricSize) * renderScale
         let font = CTFontCreateWithName(fontName as CFString, fontSize, nil)
