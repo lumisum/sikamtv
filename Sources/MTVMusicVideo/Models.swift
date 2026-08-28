@@ -145,15 +145,40 @@ enum VisualizerKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case mirror = "Mirror"
     case circle = "Circle"
     case ripple = "Ripple"
+    case aurora = "Aurora"
+    case prism = "Prism"
+    case nebula = "Nebula"
+    case kaleidoscope = "Kaleidoscope"
+    case starfield = "Starfield"
 
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .wave: return "流光波形"
+        case .wave: return "丝绸波形"
         case .spectrum: return "动态频谱"
-        case .mirror: return "镜像频谱"
-        case .circle: return "能量圆环"
-        case .ripple: return "音频水波"
+        case .mirror: return "镜像地平线"
+        case .circle: return "呼吸光环"
+        case .ripple: return "液态水波"
+        case .aurora: return "极光帷幕"
+        case .prism: return "棱镜隧道"
+        case .nebula: return "星尘星云"
+        case .kaleidoscope: return "万象花镜"
+        case .starfield: return "星河跃迁"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .wave: return "多层波形随人声与旋律柔和流动"
+        case .spectrum: return "频段能量驱动经典彩色频谱柱"
+        case .mirror: return "上下对称的频谱包络与地平线光带"
+        case .circle: return "频谱环绕中心形成呼吸式能量光环"
+        case .ripple: return "低频推动椭圆水波向外连续扩散"
+        case .aurora: return "不同频段分别驱动多层半透明极光"
+        case .prism: return "节拍穿行于旋转的彩色几何隧道"
+        case .nebula: return "高频点亮星尘，低频推动星云呼吸"
+        case .kaleidoscope: return "镜像频段生成旋转绽放的对称花瓣"
+        case .starfield: return "响度控制纵深，高频化作跃迁星轨"
         }
     }
 }
@@ -169,29 +194,116 @@ enum VisualTemplate: String, CaseIterable, Identifiable, Codable, Sendable {
     var title: String { rawValue }
     var subtitle: String {
         switch self {
-        case .zen: return "禅意水波 · 节拍光晕"
-        case .ethereal: return "流场光带 · 空灵粒子"
-        case .minimal: return "真实波形 · 克制留白"
-        case .cinema: return "电影构图 · 柔光氛围"
-        case .electronic: return "峰值频谱 · 强节奏响应"
+        case .zen: return "碧金水波 · 节拍光晕"
+        case .ethereal: return "紫粉极光 · 空灵帷幕"
+        case .minimal: return "冷银波形 · 克制留白"
+        case .cinema: return "琥珀棱镜 · 电影字幕"
+        case .electronic: return "青洋红频谱 · 强节奏"
         }
     }
     var defaultVisualizer: VisualizerKind {
         switch self {
-        case .zen, .cinema: return .ripple
-        case .ethereal: return .circle
+        case .zen: return .ripple
+        case .ethereal: return .aurora
         case .minimal: return .wave
+        case .cinema: return .prism
         case .electronic: return .spectrum
         }
     }
-    var accent: CGColor {
+    var accent: CGColor { palette.accent }
+    var palette: VisualPalette {
         switch self {
-        case .zen: return CGColor(red: 0.67, green: 0.94, blue: 0.83, alpha: 1)
-        case .ethereal: return CGColor(red: 0.66, green: 0.58, blue: 1, alpha: 1)
-        case .minimal: return CGColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
-        case .cinema: return CGColor(red: 1, green: 0.69, blue: 0.40, alpha: 1)
-        case .electronic: return CGColor(red: 0.08, green: 0.91, blue: 1, alpha: 1)
+        case .zen:
+            return VisualPalette(
+                accent: CGColor(red: 0.46, green: 0.97, blue: 0.78, alpha: 1),
+                secondary: CGColor(red: 0.99, green: 0.84, blue: 0.38, alpha: 1),
+                highlight: CGColor(red: 0.88, green: 1.00, blue: 0.94, alpha: 1),
+                lyric: CGColor(red: 0.82, green: 1.00, blue: 0.90, alpha: 1),
+                warm: CGColor(red: 0.38, green: 0.86, blue: 0.62, alpha: 1),
+                cool: CGColor(red: 0.55, green: 0.90, blue: 1.00, alpha: 1)
+            )
+        case .ethereal:
+            return VisualPalette(
+                accent: CGColor(red: 0.73, green: 0.54, blue: 1.00, alpha: 1),
+                secondary: CGColor(red: 1.00, green: 0.46, blue: 0.82, alpha: 1),
+                highlight: CGColor(red: 0.90, green: 0.94, blue: 1.00, alpha: 1),
+                lyric: CGColor(red: 0.95, green: 0.88, blue: 1.00, alpha: 1),
+                warm: CGColor(red: 0.98, green: 0.52, blue: 0.78, alpha: 1),
+                cool: CGColor(red: 0.48, green: 0.78, blue: 1.00, alpha: 1)
+            )
+        case .minimal:
+            return VisualPalette(
+                accent: CGColor(red: 0.96, green: 0.97, blue: 1.00, alpha: 1),
+                secondary: CGColor(red: 0.70, green: 0.82, blue: 0.96, alpha: 1),
+                highlight: CGColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 1),
+                lyric: CGColor(red: 0.98, green: 0.99, blue: 1.00, alpha: 1),
+                warm: CGColor(red: 0.90, green: 0.88, blue: 0.84, alpha: 1),
+                cool: CGColor(red: 0.76, green: 0.86, blue: 0.98, alpha: 1)
+            )
+        case .cinema:
+            return VisualPalette(
+                accent: CGColor(red: 1.00, green: 0.72, blue: 0.34, alpha: 1),
+                secondary: CGColor(red: 1.00, green: 0.38, blue: 0.46, alpha: 1),
+                highlight: CGColor(red: 1.00, green: 0.93, blue: 0.72, alpha: 1),
+                lyric: CGColor(red: 1.00, green: 0.94, blue: 0.82, alpha: 1),
+                warm: CGColor(red: 1.00, green: 0.50, blue: 0.22, alpha: 1),
+                cool: CGColor(red: 0.98, green: 0.78, blue: 0.52, alpha: 1)
+            )
+        case .electronic:
+            return VisualPalette(
+                accent: CGColor(red: 0.10, green: 0.96, blue: 1.00, alpha: 1),
+                secondary: CGColor(red: 1.00, green: 0.18, blue: 0.72, alpha: 1),
+                highlight: CGColor(red: 0.62, green: 1.00, blue: 0.42, alpha: 1),
+                lyric: CGColor(red: 0.82, green: 1.00, blue: 1.00, alpha: 1),
+                warm: CGColor(red: 1.00, green: 0.32, blue: 0.52, alpha: 1),
+                cool: CGColor(red: 0.18, green: 0.82, blue: 1.00, alpha: 1)
+            )
         }
+    }
+}
+
+struct VisualPalette: Sendable {
+    let accent: CGColor
+    let secondary: CGColor
+    let highlight: CGColor
+    let lyric: CGColor
+    let warm: CGColor
+    let cool: CGColor
+
+    func tone(at progress: CGFloat) -> CGColor {
+        let p = min(1, max(0, progress))
+        if p < 0.5 { return Self.mix(warm, accent, p * 2) }
+        return Self.mix(accent, cool, (p - 0.5) * 2)
+    }
+
+    func ribbon(_ index: Int) -> CGColor {
+        switch index % 5 {
+        case 0: return cool
+        case 1: return secondary
+        case 2: return accent
+        case 3: return highlight
+        default: return warm
+        }
+    }
+
+    static func mix(_ a: CGColor, _ b: CGColor, _ t: CGFloat) -> CGColor {
+        let clamped = min(1, max(0, t))
+        let ac = rgba(a)
+        let bc = rgba(b)
+        return CGColor(
+            red: ac.0 + (bc.0 - ac.0) * clamped,
+            green: ac.1 + (bc.1 - ac.1) * clamped,
+            blue: ac.2 + (bc.2 - ac.2) * clamped,
+            alpha: ac.3 + (bc.3 - ac.3) * clamped
+        )
+    }
+
+    static func rgba(_ color: CGColor) -> (CGFloat, CGFloat, CGFloat, CGFloat) {
+        let converted = color.converted(to: CGColorSpaceCreateDeviceRGB(), intent: .defaultIntent, options: nil) ?? color
+        let c = converted.components ?? [1, 1, 1, 1]
+        if c.count >= 4 { return (c[0], c[1], c[2], c[3]) }
+        if c.count == 2 { return (c[0], c[0], c[0], c[1]) }
+        return (1, 1, 1, 1)
     }
 }
 
@@ -199,6 +311,8 @@ enum LyricAnimation: String, CaseIterable, Identifiable, Codable, Sendable {
     case scroll = "向上滚动"
     case fade = "柔和淡入"
     case scale = "呼吸缩放"
+    case karaoke = "逐字点亮"
+    case bloom = "光晕绽放"
     case none = "无动画"
     var id: String { rawValue }
 }
@@ -213,30 +327,30 @@ enum LyricAlignment: String, CaseIterable, Identifiable, Codable, Sendable {
 struct RenderSettings: Codable, Equatable, Sendable {
     var aspectRatio: AspectRatio = .portrait
     var template: VisualTemplate = .ethereal
-    var visualizer: VisualizerKind = .circle
+    var visualizer: VisualizerKind = .aurora
     var blur: Double = 18
-    var darkness: Double = 0.32
-    var saturation: Double = 1
+    var darkness: Double = 0.34
+    var saturation: Double = 1.16
     var backgroundTransition: BackgroundTransition = .crossfade
-    var backgroundTransitionDuration: Double = 0.8
+    var backgroundTransitionDuration: Double = 1.35
 
-    var visualizerStrength: Double = 0.82
-    var visualizerPositionY: Double = 0.30
-    var visualizerScale: Double = 1
-    var visualizerGlow: Double = 0.72
-    var visualizerSmoothing: Double = 0.68
-    var visualizerDensity: Double = 0.70
+    var visualizerStrength: Double = 0.86
+    var visualizerPositionY: Double = 0.31
+    var visualizerScale: Double = 1.08
+    var visualizerGlow: Double = 0.96
+    var visualizerSmoothing: Double = 0.72
+    var visualizerDensity: Double = 0.86
 
     var lyricSize: Double = 42
-    var lyricPositionY: Double = 0.55
+    var lyricPositionY: Double = 0.60
     var lyricWidth: Double = 0.82
     var lyricLineSpacing: Double = 1.85
-    var lyricInactiveOpacity: Double = 0.30
-    var lyricGlow: Double = 0.45
-    var lyricAnimationDuration: Double = 0.42
-    var lyricAnimation: LyricAnimation = .scroll
+    var lyricInactiveOpacity: Double = 0.24
+    var lyricGlow: Double = 0.82
+    var lyricAnimationDuration: Double = 0.52
+    var lyricAnimation: LyricAnimation = .bloom
     var lyricAlignment: LyricAlignment = .center
-    var fontPostScriptName: String = "PingFangSC-Regular"
+    var fontPostScriptName: String = FontManager.defaultPostScriptName
 }
 
 struct AudioFrameFeatures: Sendable {

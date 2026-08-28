@@ -7,6 +7,19 @@ import UniformTypeIdentifiers
 final class MediaManager {
     static let shared = MediaManager()
 
+    func chooseAssetURLs() -> [URL] {
+        let panel = NSOpenPanel()
+        var types: [UTType] = [.jpeg, .png, .heic, .mpeg4Movie, .quickTimeMovie, .audio, .plainText]
+        if let lrc = UTType(filenameExtension: "lrc") { types.append(lrc) }
+        if let srt = UTType(filenameExtension: "srt") { types.append(srt) }
+        panel.allowedContentTypes = types
+        panel.allowsMultipleSelection = true
+        panel.message = "选择图片、视频、音频或 LRC / SRT 字幕，可同时选择多个文件"
+        panel.prompt = "导入资源"
+        guard panel.runModal() == .OK else { return [] }
+        return panel.urls
+    }
+
     func chooseBackgroundURLs() -> [URL] {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.jpeg, .png, .heic, .mpeg4Movie, .quickTimeMovie]

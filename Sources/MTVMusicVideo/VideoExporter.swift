@@ -446,12 +446,11 @@ private final class ExportVideoSource: @unchecked Sendable {
             let nextMedia = timeline?.nextIndex.map { backgrounds[$0] }
             let frameImage = image(for: currentMedia, at: timeline?.currentLocalTime ?? time, role: 0)
             let nextFrameImage = image(for: nextMedia, at: timeline?.nextLocalTime ?? 0, role: 1)
-            guard let pixelBuffer = makePixelBuffer(pool: adaptor.pixelBufferPool),
-                  let context = bitmapContext(for: pixelBuffer) else {
+            guard let pixelBuffer = makePixelBuffer(pool: adaptor.pixelBufferPool) else {
                 throw VideoExporter.ExportError.cannotCreatePixelBuffer
             }
-            render.render(
-                into: context,
+            let rendered = render.render(
+                into: pixelBuffer,
                 size: size,
                 time: time,
                 settings: settings,
@@ -466,7 +465,7 @@ private final class ExportVideoSource: @unchecked Sendable {
                 analysis: analysis,
                 fontName: fontName
             )
-            CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+            guard rendered else { throw VideoExporter.ExportError.cannotCreatePixelBuffer }
             let presentation = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps))
             guard adaptor.append(pixelBuffer, withPresentationTime: presentation) else {
                 throw writer.error ?? VideoExporter.ExportError.failedToWrite
@@ -493,28 +492,12 @@ private final class ExportVideoSource: @unchecked Sendable {
         } else {
             let attrs = [
                 kCVPixelBufferCGImageCompatibilityKey: true,
-                kCVPixelBufferCGBitmapContextCompatibilityKey: true
+                kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+                kCVPixelBufferMetalCompatibilityKey: true,
+                kCVPixelBufferIOSurfacePropertiesKey: [:]
             ] as CFDictionary
             guard CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height), kCVPixelFormatType_32BGRA, attrs, &pixelBuffer) == kCVReturnSuccess else { return nil }
         }
         return pixelBuffer
-    }
-
-    private func bitmapContext(for buffer: CVPixelBuffer) -> CGContext? {
-        CVPixelBufferLockBaseAddress(buffer, [])
-        guard let base = CVPixelBufferGetBaseAddress(buffer),
-              let context = CGContext(
-                data: base,
-                width: Int(size.width),
-                height: Int(size.height),
-                bitsPerComponent: 8,
-                bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-              ) else {
-            CVPixelBufferUnlockBaseAddress(buffer, [])
-            return nil
-        }
-        return context
     }
 }

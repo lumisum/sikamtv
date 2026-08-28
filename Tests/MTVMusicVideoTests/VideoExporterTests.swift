@@ -63,6 +63,61 @@ final class VideoExporterTests: XCTestCase {
         XCTAssertFalse(asset.tracks(withMediaType: .audio).isEmpty)
     }
 
+    func testEncodedMovieKeepsMetalBackgroundUpright() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sikamtv-orientation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let audioURL = root.appendingPathComponent("test.caf")
+        let backgroundURL = root.appendingPathComponent("banded.png")
+        let outputURL = root.appendingPathComponent("upright.mp4")
+        try makeAudio(at: audioURL, duration: 0.2)
+        let backgroundData = try XCTUnwrap(NSBitmapImageRep(cgImage: makeBandedBackground()).representation(using: .png, properties: [:]))
+        try backgroundData.write(to: backgroundURL)
+        let frameCount = 6
+        let analysis = AudioAnalysis(
+            duration: 0.2,
+            sampleRate: 44_100,
+            amplitudes: Array(repeating: 0, count: frameCount),
+            loudness: Array(repeating: 0, count: frameCount),
+            bass: Array(repeating: 0, count: frameCount),
+            mid: Array(repeating: 0, count: frameCount),
+            high: Array(repeating: 0, count: frameCount),
+            beats: Array(repeating: 0, count: frameCount),
+            spectrum: Array(repeating: Array(repeating: 0, count: 96), count: frameCount),
+            waveform: Array(repeating: Array(repeating: 0, count: 128), count: frameCount)
+        )
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.template = .minimal
+        settings.blur = 0
+        settings.darkness = 0
+        settings.saturation = 1
+        settings.visualizerStrength = 0
+        settings.visualizerGlow = 0
+
+        try VideoExporter().export(
+            to: outputURL,
+            backgrounds: [BackgroundMedia(url: backgroundURL, kind: .image, duration: 0)],
+            audioURL: audioURL,
+            lyrics: [],
+            analysis: analysis,
+            settings: settings,
+            fontName: "PingFangSC-Regular",
+            progress: { _ in }
+        )
+
+        let generator = AVAssetImageGenerator(asset: AVAsset(url: outputURL))
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let frame = try generator.copyCGImage(at: CMTime(value: 1, timescale: 30), actualTime: nil)
+        let bitmap = NSBitmapImageRep(cgImage: frame)
+        let top = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 6)?.usingColorSpace(.deviceRGB))
+        let bottom = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh * 5 / 6)?.usingColorSpace(.deviceRGB))
+        XCTAssertGreaterThan(top.redComponent, top.blueComponent + 0.20)
+        XCTAssertGreaterThan(bottom.blueComponent, bottom.redComponent + 0.20)
+    }
+
     func testExportCanBeCancelledBeforeTheFirstFrame() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("sikamtv-cancel-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -267,6 +322,15 @@ final class VideoExporterTests: XCTestCase {
         let context = CGContext(data: nil, width: 512, height: 512, bitsPerComponent: 8, bytesPerRow: 512 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [CGColor(red: 0.08, green: 0.12, blue: 0.30, alpha: 1), CGColor(red: 0.55, green: 0.10, blue: 0.42, alpha: 1)] as CFArray, locations: [0, 1])!
         context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 512, y: 512), options: [])
+        return context.makeImage()!
+    }
+
+    private func makeBandedBackground() -> CGImage {
+        let context = CGContext(data: nil, width: 640, height: 360, bitsPerComponent: 8, bytesPerRow: 640 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 0.05, green: 0.12, blue: 0.95, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 640, height: 180))
+        context.setFillColor(CGColor(red: 0.95, green: 0.08, blue: 0.08, alpha: 1))
+        context.fill(CGRect(x: 0, y: 180, width: 640, height: 180))
         return context.makeImage()!
     }
 

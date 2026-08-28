@@ -12,7 +12,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "MTVMusicVideo",
-            path: "Sources/MTVMusicVideo"
+            path: "Sources/MTVMusicVideo",
+            resources: [
+                .copy("Resources")
+            ]
         ),
         .testTarget(
             name: "MTVMusicVideoTests",

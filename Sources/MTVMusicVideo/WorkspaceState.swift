@@ -68,7 +68,10 @@ final class WorkspaceState: ObservableObject {
         backgroundAudioEnabled = UserDefaults.standard.bool(forKey: "SikaMTV.BackgroundAudioEnabled")
         backgroundAudioVolume = UserDefaults.standard.object(forKey: "SikaMTV.BackgroundAudioVolume") as? Double ?? 0.25
         if let data = UserDefaults.standard.data(forKey: "SikaMTV.RenderSettings"),
-           let restored = try? JSONDecoder().decode(RenderSettings.self, from: data) {
+           var restored = try? JSONDecoder().decode(RenderSettings.self, from: data) {
+            if restored.fontPostScriptName == "PingFangSC-Regular" {
+                restored.fontPostScriptName = FontManager.defaultPostScriptName
+            }
             settings = restored
         } else {
             settings = RenderSettings()
@@ -96,6 +99,21 @@ final class WorkspaceState: ObservableObject {
         let urls = MediaManager.shared.chooseBackgroundURLs()
         guard !urls.isEmpty else { return }
         loadBackgrounds(from: urls)
+    }
+
+    func importAssets() {
+        let urls = MediaManager.shared.chooseAssetURLs()
+        guard !urls.isEmpty else { return }
+        let backgroundURLs = urls.filter { ["jpg", "jpeg", "png", "heic", "mp4", "mov", "m4v"].contains($0.pathExtension.lowercased()) }
+        if !backgroundURLs.isEmpty { loadBackgrounds(from: backgroundURLs) }
+        for url in urls {
+            let ext = url.pathExtension.lowercased()
+            if ["wav", "mp3", "m4a", "aac", "aiff", "flac"].contains(ext) {
+                addAudioToLibrary(url)
+            } else if ["lrc", "srt"].contains(ext) {
+                addLyricsToLibrary(url)
+            }
+        }
     }
 
     func importAudio() {
@@ -291,30 +309,35 @@ final class WorkspaceState: ObservableObject {
         updated.visualizer = template.defaultVisualizer
         switch template {
         case .zen:
-            updated.blur = 22; updated.darkness = 0.30; updated.lyricSize = 44
+            updated.blur = 22; updated.darkness = 0.30; updated.saturation = 1.08; updated.lyricSize = 44
+            updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.20
             updated.visualizerStrength = 0.74; updated.visualizerPositionY = 0.30
-            updated.visualizerScale = 1.05; updated.visualizerGlow = 0.76; updated.visualizerDensity = 0.58
-            updated.lyricPositionY = 0.58; updated.lyricAnimation = .scroll
+            updated.visualizerScale = 1.05; updated.visualizerGlow = 0.88; updated.visualizerSmoothing = 0.78; updated.visualizerDensity = 0.58
+            updated.lyricPositionY = 0.58; updated.lyricAnimation = .scroll; updated.lyricGlow = 0.66; updated.lyricInactiveOpacity = 0.25; updated.lyricAnimationDuration = 0.55
         case .ethereal:
-            updated.blur = 18; updated.darkness = 0.34; updated.lyricSize = 42
+            updated.blur = 18; updated.darkness = 0.34; updated.saturation = 1.16; updated.lyricSize = 42
+            updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.35
             updated.visualizerStrength = 0.86; updated.visualizerPositionY = 0.31
-            updated.visualizerScale = 1.08; updated.visualizerGlow = 0.92; updated.visualizerDensity = 0.86
-            updated.lyricPositionY = 0.60; updated.lyricAnimation = .fade
+            updated.visualizerScale = 1.08; updated.visualizerGlow = 0.96; updated.visualizerSmoothing = 0.72; updated.visualizerDensity = 0.86
+            updated.lyricPositionY = 0.60; updated.lyricAnimation = .bloom; updated.lyricGlow = 0.82; updated.lyricInactiveOpacity = 0.24; updated.lyricAnimationDuration = 0.52
         case .minimal:
-            updated.blur = 4; updated.darkness = 0.28; updated.lyricSize = 38
+            updated.blur = 4; updated.darkness = 0.28; updated.saturation = 0.92; updated.lyricSize = 38
+            updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 0.65
             updated.visualizerStrength = 0.56; updated.visualizerPositionY = 0.22
-            updated.visualizerScale = 0.92; updated.visualizerGlow = 0.24; updated.visualizerDensity = 0.42
-            updated.lyricPositionY = 0.56; updated.lyricAnimation = .fade
+            updated.visualizerScale = 0.92; updated.visualizerGlow = 0.32; updated.visualizerSmoothing = 0.82; updated.visualizerDensity = 0.42
+            updated.lyricPositionY = 0.56; updated.lyricAnimation = .fade; updated.lyricGlow = 0.28; updated.lyricInactiveOpacity = 0.34; updated.lyricAnimationDuration = 0.30
         case .cinema:
-            updated.blur = 26; updated.darkness = 0.46; updated.lyricSize = 50
+            updated.blur = 26; updated.darkness = 0.46; updated.saturation = 1.05; updated.lyricSize = 50
+            updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.40
             updated.visualizerStrength = 0.62; updated.visualizerPositionY = 0.27
-            updated.visualizerScale = 1.12; updated.visualizerGlow = 0.64; updated.visualizerDensity = 0.48
-            updated.lyricPositionY = 0.59; updated.lyricAnimation = .scroll
+            updated.visualizerScale = 1.12; updated.visualizerGlow = 0.82; updated.visualizerSmoothing = 0.75; updated.visualizerDensity = 0.48
+            updated.lyricPositionY = 0.59; updated.lyricAnimation = .scroll; updated.lyricGlow = 0.74; updated.lyricInactiveOpacity = 0.20; updated.lyricAnimationDuration = 0.60
         case .electronic:
-            updated.blur = 8; updated.darkness = 0.24; updated.lyricSize = 40
+            updated.blur = 8; updated.darkness = 0.24; updated.saturation = 1.22; updated.lyricSize = 40
+            updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 0.55
             updated.visualizerStrength = 1; updated.visualizerPositionY = 0.22
-            updated.visualizerScale = 1.02; updated.visualizerGlow = 0.88; updated.visualizerDensity = 0.82
-            updated.lyricPositionY = 0.60; updated.lyricAnimation = .scale
+            updated.visualizerScale = 1.02; updated.visualizerGlow = 0.95; updated.visualizerSmoothing = 0.42; updated.visualizerDensity = 0.82
+            updated.lyricPositionY = 0.60; updated.lyricAnimation = .karaoke; updated.lyricGlow = 0.80; updated.lyricInactiveOpacity = 0.26; updated.lyricAnimationDuration = 0.28
         }
         settings = updated // One state transaction, one preview request.
     }

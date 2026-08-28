@@ -9,7 +9,7 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             AssetsPanel()
-                .frame(width: 235)
+                .frame(width: 270)
             Divider()
             PreviewPanel(previewImage: $previewImage)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -62,141 +62,261 @@ struct ErrorBanner: View {
 
 struct AssetsPanel: View {
     @EnvironmentObject private var workspace: WorkspaceState
+    @State private var searchText = ""
+    @State private var filter: ResourceFilter = .all
+    @State private var isDropTargeted = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("素材库").font(.title3.weight(.semibold))
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("资源管理器").font(.title3.weight(.semibold))
+                        Text("统一管理项目素材").font(.caption2).foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Image(systemName: "square.stack.3d.up")
+                    Button(action: workspace.importAssets) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 27, height: 27)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .help("同时导入图片、视频、音频或字幕")
+                }
+
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("搜索资源", text: $searchText)
+                        .textFieldStyle(.plain)
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 9)
+                .frame(height: 30)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
+
+                HStack {
+                    Picker("资源类型", selection: $filter) {
+                        ForEach(ResourceFilter.allCases) { option in
+                            Label(option.title, systemImage: option.icon).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 150)
+                    Spacer()
+                    Text("\(filteredItems.count) 项")
+                        .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                Text("先导入素材，再拖入中央工作区应用。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                LibrarySectionHeader(title: "背景", systemImage: "photo.on.rectangle", action: workspace.importBackground)
-                if workspace.isLoadingBackgrounds {
-                    ProgressView().controlSize(.small)
-                }
-                if workspace.backgroundLibrary.isEmpty && !workspace.isLoadingBackgrounds {
-                    LibraryEmptyRow(text: "导入图片或视频")
-                } else {
-                    ForEach(workspace.backgroundLibrary, id: \.url) { media in
-                        BackgroundLibraryRow(media: media)
-                    }
-                }
-
-                Divider().padding(.vertical, 2)
-                LibrarySectionHeader(title: "音乐", systemImage: "music.note", action: workspace.importAudio)
-                if workspace.audioLibrary.isEmpty {
-                    LibraryEmptyRow(text: "导入 WAV / MP3 / M4A")
-                } else {
-                    ForEach(workspace.audioLibrary, id: \.self) { url in
-                        URLLibraryRow(url: url, icon: "waveform", isActive: workspace.audioURL?.standardizedFileURL == url.standardizedFileURL, activate: { workspace.activateAudio(url) }, remove: { workspace.removeAudioFromLibrary(url) })
-                    }
-                }
-
-                Divider().padding(.vertical, 2)
-                LibrarySectionHeader(title: "歌词 / 字幕", systemImage: "captions.bubble", action: workspace.importLyrics)
-                if workspace.lyricsLibrary.isEmpty {
-                    LibraryEmptyRow(text: "导入 LRC / SRT")
-                } else {
-                    ForEach(workspace.lyricsLibrary, id: \.self) { url in
-                        URLLibraryRow(url: url, icon: "captions.bubble", isActive: workspace.lyricsURL?.standardizedFileURL == url.standardizedFileURL, activate: { workspace.activateLyrics(url) }, remove: { workspace.removeLyricsFromLibrary(url) })
-                    }
-                }
-
-                if let message = workspace.alertMessage {
-                    ErrorBanner(message: message) { workspace.alertMessage = nil }
-                }
-                Spacer(minLength: 12)
             }
-            .padding(18)
-        }
-    }
-}
+            .padding(16)
 
-private struct LibrarySectionHeader: View {
-    let title: String
-    let systemImage: String
-    let action: () -> Void
+            Divider()
 
-    var body: some View {
-        HStack {
-            Label(title, systemImage: systemImage).font(.headline)
-            Spacer()
-            Button(action: action) { Image(systemName: "plus.circle.fill") }
-                .buttonStyle(.plain)
-                .help("导入素材")
-        }
-    }
-}
+            ScrollView {
+                LazyVStack(spacing: 7) {
+                    if workspace.isLoadingBackgrounds {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("正在读取媒体信息…").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                    }
+                    if filteredItems.isEmpty && !workspace.isLoadingBackgrounds {
+                        ResourceLibraryEmptyState(hasSearch: !searchText.isEmpty || filter != .all)
+                    } else {
+                        ForEach(filteredItems) { item in
+                            ResourceLibraryRow(item: item)
+                        }
+                    }
+                }
+                .padding(12)
+            }
+            .frame(maxHeight: .infinity)
 
-private struct LibraryEmptyRow: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(9)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct BackgroundLibraryRow: View {
-    @EnvironmentObject private var workspace: WorkspaceState
-    let media: BackgroundMedia
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: media.kind == .video ? "video.fill" : "photo.fill")
+            Divider()
+            Label("拖入文件也可加入资源库", systemImage: "arrow.down.doc")
+                .font(.caption2)
                 .foregroundStyle(.secondary)
-            Text(media.url.lastPathComponent)
-                .font(.caption)
-                .lineLimit(1)
-            Spacer()
-            Button { workspace.activateBackground(media) } label: { Image(systemName: "plus") }
-                .buttonStyle(.plain)
-                .help("加入工作区")
-            Button { workspace.removeBackgroundFromLibrary(media) } label: { Image(systemName: "xmark.circle") }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("从素材库移除")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
         }
-        .padding(8)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-        .onDrag { NSItemProvider(object: media.url as NSURL) }
+        .background(isDropTargeted ? Color.accentColor.opacity(0.08) : Color.clear)
+        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
+            for provider in providers {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                    guard let data, let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                    Task { @MainActor in workspace.handleDropped(url: url) }
+                }
+            }
+            return true
+        }
+    }
+
+    private var allItems: [ResourceLibraryItem] {
+        let backgrounds = workspace.backgroundLibrary.map {
+            ResourceLibraryItem(url: $0.url, kind: $0.kind == .video ? .video : .image, duration: $0.duration)
+        }
+        let audio = workspace.audioLibrary.map { ResourceLibraryItem(url: $0, kind: .audio, duration: 0) }
+        let captions = workspace.lyricsLibrary.map { ResourceLibraryItem(url: $0, kind: .captions, duration: 0) }
+        return (backgrounds + audio + captions).sorted {
+            if $0.kind.order != $1.kind.order { return $0.kind.order < $1.kind.order }
+            return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
+        }
+    }
+
+    private var filteredItems: [ResourceLibraryItem] {
+        allItems.filter { item in
+            (filter.kind == nil || filter.kind == item.kind)
+                && (searchText.isEmpty || item.url.lastPathComponent.localizedCaseInsensitiveContains(searchText))
+        }
     }
 }
 
-private struct URLLibraryRow: View {
+private enum ResourceLibraryKind: String, CaseIterable, Identifiable {
+    case image, video, audio, captions
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .image: return "图片"
+        case .video: return "视频"
+        case .audio: return "音频"
+        case .captions: return "字幕"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .image: return "photo.fill"
+        case .video: return "video.fill"
+        case .audio: return "waveform"
+        case .captions: return "captions.bubble.fill"
+        }
+    }
+    var color: Color {
+        switch self {
+        case .image: return .blue
+        case .video: return .purple
+        case .audio: return .orange
+        case .captions: return .pink
+        }
+    }
+    var order: Int {
+        switch self { case .image: return 0; case .video: return 1; case .audio: return 2; case .captions: return 3 }
+    }
+}
+
+private enum ResourceFilter: String, CaseIterable, Identifiable {
+    case all, image, video, audio, captions
+    var id: String { rawValue }
+    var title: String { self == .all ? "全部资源" : kind?.title ?? "全部资源" }
+    var icon: String { self == .all ? "square.grid.2x2" : kind?.icon ?? "square.grid.2x2" }
+    var kind: ResourceLibraryKind? { self == .all ? nil : ResourceLibraryKind(rawValue: rawValue) }
+}
+
+private struct ResourceLibraryItem: Identifiable {
     let url: URL
-    let icon: String
-    let isActive: Bool
-    let activate: () -> Void
-    let remove: () -> Void
+    let kind: ResourceLibraryKind
+    let duration: Double
+    var id: String { url.standardizedFileURL.path }
+}
+
+private struct ResourceLibraryEmptyState: View {
+    let hasSearch: Bool
 
     var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: icon).foregroundStyle(isActive ? .green : .secondary)
-            Text(url.lastPathComponent).font(.caption).lineLimit(1)
+        VStack(spacing: 9) {
+            Image(systemName: hasSearch ? "magnifyingglass" : "tray.and.arrow.down")
+                .font(.system(size: 24))
+                .foregroundStyle(.tertiary)
+            Text(hasSearch ? "没有匹配的资源" : "资源库为空")
+                .font(.subheadline.weight(.medium))
+            Text(hasSearch ? "更换筛选条件或搜索词" : "点击上方 +，可一次导入多种素材")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 34)
+    }
+}
+
+private struct ResourceLibraryRow: View {
+    @EnvironmentObject private var workspace: WorkspaceState
+    let item: ResourceLibraryItem
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7).fill(item.kind.color.opacity(0.15))
+                Image(systemName: item.kind.icon).foregroundStyle(item.kind.color)
+            }
+            .frame(width: 32, height: 32)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.url.deletingPathExtension().lastPathComponent)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(item.kind.title)
+                    if item.duration > 0 { Text(formatDuration(item.duration)) }
+                    if isActive { Text("已应用").foregroundStyle(.green) }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
             Spacer()
-            if isActive { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
-            Button(action: activate) { Image(systemName: "plus") }
+            Button(action: activate) {
+                Image(systemName: isActive ? "checkmark.circle.fill" : "plus.circle")
+                    .foregroundStyle(isActive ? Color.green : Color.secondary)
+            }
                 .buttonStyle(.plain)
                 .help("加入工作区")
-            Button(action: remove) { Image(systemName: "xmark.circle") }
+            Button(action: remove) { Image(systemName: "xmark") }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
                 .help("从素材库移除")
         }
         .padding(8)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-        .onDrag { NSItemProvider(object: url as NSURL) }
+        .background(isActive ? Color.green.opacity(0.055) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(isActive ? Color.green.opacity(0.20) : Color.clear))
+        .onDrag { NSItemProvider(object: item.url as NSURL) }
+        .contextMenu {
+            Button("加入工作区", action: activate)
+            Button("从资源库移除", role: .destructive, action: remove)
+        }
+    }
+
+    private var isActive: Bool {
+        switch item.kind {
+        case .image, .video: return workspace.backgrounds.contains { $0.url.standardizedFileURL == item.url.standardizedFileURL }
+        case .audio: return workspace.audioURL?.standardizedFileURL == item.url.standardizedFileURL
+        case .captions: return workspace.lyricsURL?.standardizedFileURL == item.url.standardizedFileURL
+        }
+    }
+
+    private func activate() {
+        switch item.kind {
+        case .image, .video:
+            if let media = workspace.backgroundLibrary.first(where: { $0.url.standardizedFileURL == item.url.standardizedFileURL }) { workspace.activateBackground(media) }
+        case .audio: workspace.activateAudio(item.url)
+        case .captions: workspace.activateLyrics(item.url)
+        }
+    }
+
+    private func remove() {
+        switch item.kind {
+        case .image, .video:
+            if let media = workspace.backgroundLibrary.first(where: { $0.url.standardizedFileURL == item.url.standardizedFileURL }) { workspace.removeBackgroundFromLibrary(media) }
+        case .audio: workspace.removeAudioFromLibrary(item.url)
+        case .captions: workspace.removeLyricsFromLibrary(item.url)
+        }
+    }
+
+    private func formatDuration(_ value: Double) -> String {
+        String(format: "%d:%02d", Int(value) / 60, Int(value) % 60)
     }
 }
 
@@ -250,7 +370,7 @@ struct PreviewPanel: View {
             .aspectRatio(previewAspectRatio, contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             WorkspaceDropArea()
-                .frame(height: 126)
+                .frame(height: 154)
             PlaybackControls()
         }
         .padding(22)
@@ -267,27 +387,13 @@ struct WorkspaceDropArea: View {
     @State private var isTargeted = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("工作区", systemImage: "rectangle.3.group")
-                    .font(.headline)
-                Text("工作区中的素材才会应用")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ActiveBackgroundGroup()
-                    ActiveURLGroup(title: "音乐", icon: "music.note", url: workspace.audioURL, placeholder: "拖入音乐", clear: workspace.clearAudio, remove: nil)
-                    ActiveURLGroup(title: "歌词", icon: "captions.bubble", url: workspace.lyricsURL, placeholder: "拖入 LRC / SRT", clear: workspace.clearLyrics, remove: nil)
-                }
-                .frame(maxHeight: .infinity, alignment: .top)
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            workspaceHeader
+            workspaceSlots
         }
-        .padding(12)
-        .background(isTargeted ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(isTargeted ? Color.accentColor : Color.secondary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+        .padding(13)
+        .background { RoundedRectangle(cornerRadius: 13).fill(dropBackground) }
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(dropBorder, lineWidth: 1))
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isTargeted) { providers in
             for provider in providers {
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
@@ -298,71 +404,149 @@ struct WorkspaceDropArea: View {
             return true
         }
     }
-}
 
-private struct ActiveBackgroundGroup: View {
-    @EnvironmentObject private var workspace: WorkspaceState
+    private var readyCount: Int {
+        (workspace.backgrounds.isEmpty ? 0 : 1) + (workspace.audioURL == nil ? 0 : 1) + (workspace.lyricsURL == nil ? 0 : 1)
+    }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Label("背景", systemImage: "photo.stack")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                if !workspace.backgrounds.isEmpty {
-                    Button("清除") { workspace.clearBackgrounds() }
-                        .buttonStyle(.borderless)
-                        .font(.caption2)
-                }
-            }
-            if workspace.backgrounds.isEmpty {
-                Text("拖入图片或视频").font(.caption2).foregroundStyle(.secondary)
-            } else {
-                ForEach(workspace.backgrounds, id: \.url) { media in
-                    HStack(spacing: 4) {
-                        Image(systemName: media.kind == .video ? "video" : "photo")
-                        Text(media.url.lastPathComponent).lineLimit(1)
-                        Button { workspace.removeBackground(media) } label: { Image(systemName: "xmark") }
-                            .buttonStyle(.plain)
-                    }
-                    .font(.caption2)
-                }
-            }
+    private var readyColor: Color { readyCount == 3 ? .green : .secondary }
+
+    private var workspaceHeader: some View {
+        HStack {
+            Label("项目素材", systemImage: "rectangle.3.group.fill").font(.headline)
+            Text("\(readyCount)/3 已就绪")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(readyColor)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background { Capsule().fill(readyColor.opacity(0.10)) }
+            Spacer()
+            Label("资源库素材拖到这里即可应用", systemImage: "hand.draw")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
-        .frame(width: 190, alignment: .leading)
-        .padding(9)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var workspaceSlots: some View {
+        HStack(spacing: 9) {
+            ProjectBackgroundSlot()
+            ProjectMaterialSlot(
+                number: "02",
+                title: "主音乐",
+                icon: "waveform",
+                tint: .orange,
+                isReady: workspace.audioURL != nil,
+                primary: workspace.audioURL?.deletingPathExtension().lastPathComponent ?? "拖入音乐文件",
+                secondary: audioStatus,
+                clear: audioClearAction
+            )
+            ProjectMaterialSlot(
+                number: "03",
+                title: "歌词字幕",
+                icon: "captions.bubble.fill",
+                tint: .pink,
+                isReady: workspace.lyricsURL != nil,
+                primary: workspace.lyricsURL?.deletingPathExtension().lastPathComponent ?? "拖入歌词或字幕",
+                secondary: workspace.lyrics.isEmpty ? "LRC · SRT" : "已解析 \(workspace.lyrics.count) 条字幕",
+                clear: lyricsClearAction
+            )
+        }
+    }
+
+    private var audioStatus: String {
+        if workspace.isAnalyzingAudio { return "正在分析节拍与频谱" }
+        if workspace.audioAnalysis != nil { return "频谱分析完成" }
+        return "WAV · MP3 · M4A"
+    }
+
+    private var audioClearAction: (() -> Void)? {
+        workspace.audioURL == nil ? nil : { workspace.clearAudio() }
+    }
+
+    private var lyricsClearAction: (() -> Void)? {
+        workspace.lyricsURL == nil ? nil : { workspace.clearLyrics() }
+    }
+
+    private var dropBackground: Color {
+        isTargeted ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.028)
+    }
+
+    private var dropBorder: Color {
+        isTargeted ? Color.accentColor : Color.secondary.opacity(0.16)
     }
 }
 
-private struct ActiveURLGroup: View {
-    let title: String
-    let icon: String
-    let url: URL?
-    let placeholder: String
-    let clear: () -> Void
-    let remove: (() -> Void)?
+private struct ProjectBackgroundSlot: View {
+    @EnvironmentObject private var workspace: WorkspaceState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label(title, systemImage: icon).font(.caption.weight(.semibold))
+                Text("01").font(.caption2.monospacedDigit().weight(.bold)).foregroundStyle(.blue)
+                Label("画面背景", systemImage: "photo.stack.fill").font(.caption.weight(.semibold))
                 Spacer()
-                if url != nil {
-                    Button("清除", action: clear).buttonStyle(.borderless).font(.caption2)
+                if !workspace.backgrounds.isEmpty {
+                    Menu {
+                        ForEach(workspace.backgrounds, id: \.url) { media in
+                            Button("移除 \(media.url.lastPathComponent)") { workspace.removeBackground(media) }
+                        }
+                        Divider()
+                        Button("清除全部", role: .destructive) { workspace.clearBackgrounds() }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
                 }
             }
-            HStack(spacing: 4) {
-                Text(url?.lastPathComponent ?? placeholder)
-                    .font(.caption2)
-                    .foregroundStyle(url == nil ? .secondary : .primary)
-                    .lineLimit(2)
-                if let remove { Button { remove() } label: { Image(systemName: "xmark") }.buttonStyle(.plain) }
-            }
+            Text(workspace.backgrounds.isEmpty ? "拖入图片或视频" : backgroundTitle)
+                .font(.caption.weight(.medium)).lineLimit(1)
+            Text(workspace.backgrounds.isEmpty ? "支持多背景自动轮播" : backgroundDetail)
+                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
-        .frame(width: 150, alignment: .leading)
-        .padding(9)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(10)
+        .background(Color.blue.opacity(workspace.backgrounds.isEmpty ? 0.045 : 0.085), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.blue.opacity(workspace.backgrounds.isEmpty ? 0.10 : 0.22)))
+    }
+
+    private var backgroundTitle: String {
+        workspace.backgrounds.count == 1 ? workspace.backgrounds[0].url.deletingPathExtension().lastPathComponent : "\(workspace.backgrounds.count) 个背景素材"
+    }
+    private var backgroundDetail: String {
+        let images = workspace.backgrounds.filter { $0.kind == .image }.count
+        let videos = workspace.backgrounds.count - images
+        let parts = [images > 0 ? "\(images) 图片" : nil, videos > 0 ? "\(videos) 视频" : nil].compactMap { $0 }
+        return parts.joined(separator: " · ") + (workspace.backgrounds.count > 1 ? " · 自动轮播" : "")
+    }
+}
+
+private struct ProjectMaterialSlot: View {
+    let number: String
+    let title: String
+    let icon: String
+    let tint: Color
+    let isReady: Bool
+    let primary: String
+    let secondary: String
+    let clear: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(number).font(.caption2.monospacedDigit().weight(.bold)).foregroundStyle(tint)
+                Label(title, systemImage: icon).font(.caption.weight(.semibold))
+                Spacer()
+                if let clear {
+                    Button(action: clear) { Image(systemName: "xmark.circle") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+            Text(primary).font(.caption.weight(.medium)).foregroundStyle(isReady ? .primary : .secondary).lineLimit(1)
+            Text(secondary).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(10)
+        .background(tint.opacity(isReady ? 0.085 : 0.045), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(tint.opacity(isReady ? 0.22 : 0.10)))
     }
 }
 
@@ -476,9 +660,11 @@ struct SettingsPanel: View {
             ForEach(VisualTemplate.allCases) { template in
                 Button { workspace.applyTemplate(template) } label: {
                     HStack(spacing: 10) {
-                        Circle()
-                            .fill(Color(nsColor: NSColor(cgColor: template.accent) ?? .white))
-                            .frame(width: 11, height: 11)
+                        HStack(spacing: 3) {
+                            Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.warm) ?? .orange)).frame(width: 8, height: 8)
+                            Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.accent) ?? .white)).frame(width: 10, height: 10)
+                            Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.secondary) ?? .magenta)).frame(width: 8, height: 8)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(template.title).font(.subheadline.weight(.medium))
                             Text(template.subtitle).font(.caption2).foregroundStyle(.secondary)
@@ -512,6 +698,10 @@ struct SettingsPanel: View {
                 SliderRow(title: "背景模糊", value: $workspace.settings.blur, range: 0...40, suffix: " px")
                 SliderRow(title: "背景暗化", value: $workspace.settings.darkness, range: 0...0.8, displayMultiplier: 100, suffix: "%")
                 SliderRow(title: "饱和度", value: $workspace.settings.saturation, range: 0...1.6, displayMultiplier: 100, suffix: "%")
+                Text("静态图片会自动加入缓慢运镜、色彩呼吸和音乐响应环境光。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Toggle("播放背景视频声音", isOn: $workspace.backgroundAudioEnabled)
                     .disabled(!workspace.hasBackgroundAudio)
                 if workspace.backgroundAudioEnabled && workspace.hasBackgroundAudio {
@@ -565,8 +755,17 @@ struct SettingsPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("音频可视化", systemImage: "waveform.path.ecg").font(.headline)
             Picker("可视化类型", selection: $workspace.settings.visualizer) {
-                ForEach(VisualizerKind.allCases) { Text($0.title).tag($0) }
+                Section("经典") {
+                    ForEach(Array(VisualizerKind.allCases.prefix(5))) { Text($0.title).tag($0) }
+                }
+                Section("沉浸") {
+                    ForEach(Array(VisualizerKind.allCases.dropFirst(5))) { Text($0.title).tag($0) }
+                }
             }
+            Text(workspace.settings.visualizer.subtitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             SliderRow(title: "响应强度", value: $workspace.settings.visualizerStrength, range: 0...1.25, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "垂直位置", value: $workspace.settings.visualizerPositionY, range: 0.12...0.72, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "整体大小", value: $workspace.settings.visualizerScale, range: 0.6...1.5, displayMultiplier: 100, suffix: "%")
@@ -587,15 +786,29 @@ struct SettingsPanel: View {
             }
             Text("字体").font(.caption.weight(.semibold))
             Picker("字体", selection: selectedFontID) {
-                ForEach(workspace.fontManager.fonts) { font in
-                    Text(font.displayName).tag(font.id)
+                Section("SikaMTV 默认字体") {
+                    ForEach(workspace.fontManager.fonts.filter(\.isBundled)) { font in
+                        Text(font.displayName).tag(font.id)
+                    }
+                }
+                Section("系统字体") {
+                    ForEach(workspace.fontManager.fonts.filter { !$0.isBundled && !$0.isImported }) { font in
+                        Text(font.displayName).tag(font.id)
+                    }
+                }
+                if workspace.fontManager.fonts.contains(where: \.isImported) {
+                    Section("我的字体") {
+                        ForEach(workspace.fontManager.fonts.filter(\.isImported)) { font in
+                            Text(font.displayName).tag(font.id)
+                        }
+                    }
                 }
             }
             Button { workspace.importFont() } label: {
                 Label("导入 TTF / OTF 字体", systemImage: "plus.circle")
             }
             .buttonStyle(.borderless)
-            Text("请确保您拥有导入字体用于当前作品的合法授权。字体仅用于生成当前画面。")
+            Text("内置默认字体由项目提供；正式发布前请确认其许可证允许随 App 分发。用户导入字体请自行确认作品授权。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -614,6 +827,10 @@ struct SettingsPanel: View {
             SliderRow(title: "次要歌词透明度", value: $workspace.settings.lyricInactiveOpacity, range: 0.08...0.72, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "文字光晕", value: $workspace.settings.lyricGlow, range: 0...1, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "动画时长", value: $workspace.settings.lyricAnimationDuration, range: 0.12...1.2, precision: 1, suffix: " s")
+            Label("智能对比度会根据歌词区域的背景亮度，自动增强轮廓、阴影和柔和底衬。", systemImage: "wand.and.stars")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
