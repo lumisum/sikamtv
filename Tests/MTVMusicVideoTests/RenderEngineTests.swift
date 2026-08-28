@@ -22,7 +22,7 @@ final class RenderEngineTests: XCTestCase {
         XCTAssertLessThanOrEqual(settings.backgroundAudioWarp, 0.15)
         XCTAssertLessThanOrEqual(settings.backgroundLightFlow, 0.15)
         XCTAssertGreaterThanOrEqual(settings.lyricGlow, 0.80)
-        XCTAssertEqual(settings.lyricAnimation, .bloom)
+        XCTAssertEqual(settings.lyricAnimation, .scroll)
         XCTAssertGreaterThanOrEqual(settings.backgroundTransitionDuration, 1.0)
         XCTAssertEqual(settings.introDuration, 12)
         XCTAssertEqual(settings.introTitleSize, 72)
@@ -136,7 +136,6 @@ final class RenderEngineTests: XCTestCase {
         )
         let engine = RenderEngine()
         var still = RenderSettings()
-        still.smartDirectorEnabled = false
         still.aspectRatio = .landscape
         still.blur = 0
         still.darkness = 0
@@ -173,7 +172,6 @@ final class RenderEngineTests: XCTestCase {
         )
         let engine = RenderEngine()
         var settings = RenderSettings()
-        settings.smartDirectorEnabled = false
         let requestedSize = CGSize(width: 270, height: 480)
 
         var rendered: [(VisualizerKind, CGImage)] = []
@@ -208,7 +206,6 @@ final class RenderEngineTests: XCTestCase {
         )
         let engine = RenderEngine()
         var plain = RenderSettings()
-        plain.smartDirectorEnabled = false
         plain.aspectRatio = .landscape
         plain.blur = 0
         plain.visualizerBrilliance = 0
@@ -258,7 +255,6 @@ final class RenderEngineTests: XCTestCase {
         )
         let engine = RenderEngine()
         var unaware = RenderSettings()
-        unaware.smartDirectorEnabled = false
         unaware.aspectRatio = .landscape
         unaware.musicAwareness = 0
         var aware = unaware
@@ -432,7 +428,6 @@ final class RenderEngineTests: XCTestCase {
         let background = try XCTUnwrap(makeSolidBackground(gray: 0.62, width: 480, height: 270))
         let engine = RenderEngine()
         var settings = RenderSettings()
-        settings.smartDirectorEnabled = false
         settings.aspectRatio = .landscape
         settings.blur = 0
         settings.darkness = 0
@@ -471,18 +466,51 @@ final class RenderEngineTests: XCTestCase {
         XCTAssertGreaterThan(environment.red, center.red + 0.18, "The same edge outside the subject mask should remain softly blurred")
     }
 
-    func testSmartCompositionMovesLyricsAndVisualizerAwayFromTheSubject() {
-        var settings = RenderSettings()
-        settings.visualizerPositionY = 0.48
-        settings.lyricPositionY = 0.60
-        let profile = VisionLayoutProfile(
-            subjectBounds: CGRect(x: 0.18, y: 0.46, width: 0.64, height: 0.48),
-            subjectCenter: CGPoint(x: 0.5, y: 0.68),
-            coverage: 0.32
+    func testLargeVisualizerCanBeIntentionallyMovedPartlyBeyondTheSafeArea() throws {
+        let analysis = AudioAnalysis(
+            duration: 2,
+            sampleRate: 44_100,
+            amplitudes: Array(repeating: 0.52, count: 60),
+            bass: Array(repeating: 0.72, count: 60),
+            mid: Array(repeating: 0.48, count: 60),
+            high: Array(repeating: 0.36, count: 60),
+            beats: Array(repeating: 0.62, count: 60),
+            spectrum: Array(repeating: Array(repeating: 0.55, count: 96), count: 60)
         )
-        let composed = RenderEngine.smartCompositionSettings(settings, profile: profile, time: 20)
-        XCTAssertEqual(composed.visualizerPositionY, 0.24, accuracy: 0.001)
-        XCTAssertEqual(composed.lyricPositionY, 0.44, accuracy: 0.001)
+        let engine = RenderEngine()
+        var lower = RenderSettings()
+        lower.visualizer = .circle
+        lower.visualizerPositionY = 0.13
+        var upper = lower
+        upper.visualizerPositionY = 0.62
+        let size = CGSize(width: 320, height: 568)
+        let lowImage = try XCTUnwrap(engine.render(size: size, time: 1, settings: lower, background: nil, backgroundDuration: 0, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        let highImage = try XCTUnwrap(engine.render(size: size, time: 1, settings: upper, background: nil, backgroundDuration: 0, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        XCTAssertGreaterThan(sparseAverageColorDifference(lowImage, highImage), 0.008)
+    }
+
+    func testLyricAnimationsCrossfadeOutgoingAndIncomingLinesContinuously() {
+        let inactive: CGFloat = 0.24
+        for animation in LyricAnimation.allCases where animation != .none {
+            let startCurrent = RenderEngine.lyricTransitionOpacity(relation: 0, progress: 0, inactive: inactive, animation: animation)
+            let startPrevious = RenderEngine.lyricTransitionOpacity(relation: -1, progress: 0, inactive: inactive, animation: animation)
+            let middleCurrent = RenderEngine.lyricTransitionOpacity(relation: 0, progress: 0.5, inactive: inactive, animation: animation)
+            let middlePrevious = RenderEngine.lyricTransitionOpacity(relation: -1, progress: 0.5, inactive: inactive, animation: animation)
+            let endCurrent = RenderEngine.lyricTransitionOpacity(relation: 0, progress: 1, inactive: inactive, animation: animation)
+            let endPrevious = RenderEngine.lyricTransitionOpacity(relation: -1, progress: 1, inactive: inactive, animation: animation)
+            let startCurrentEmphasis = RenderEngine.lyricTransitionEmphasis(relation: 0, progress: 0, animation: animation)
+            let startPreviousEmphasis = RenderEngine.lyricTransitionEmphasis(relation: -1, progress: 0, animation: animation)
+            let middleCurrentEmphasis = RenderEngine.lyricTransitionEmphasis(relation: 0, progress: 0.5, animation: animation)
+            let middlePreviousEmphasis = RenderEngine.lyricTransitionEmphasis(relation: -1, progress: 0.5, animation: animation)
+            XCTAssertEqual(startCurrent, inactive, accuracy: 0.001)
+            XCTAssertEqual(startPrevious, 1, accuracy: 0.001)
+            XCTAssertEqual(middleCurrent, middlePrevious, accuracy: 0.001)
+            XCTAssertEqual(endCurrent, 1, accuracy: 0.001)
+            XCTAssertEqual(endPrevious, inactive, accuracy: 0.001)
+            XCTAssertEqual(startCurrentEmphasis, 0, accuracy: 0.001)
+            XCTAssertEqual(startPreviousEmphasis, 1, accuracy: 0.001)
+            XCTAssertEqual(middleCurrentEmphasis + middlePreviousEmphasis, 1, accuracy: 0.001)
+        }
     }
 
     func testSubjectLayeringPlacesTheVisualizerBehindTheForeground() throws {

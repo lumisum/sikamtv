@@ -28,10 +28,6 @@ final class AudioFeaturesTests: XCTestCase {
 
     func testSettingsRoundTripIncludesLyricAndVisualizerControls() throws {
         var settings = RenderSettings()
-        settings.smartDirectorEnabled = false
-        settings.smartVisualMood = .cinema
-        settings.smartOverallIntensity = 0.81
-        settings.smartMotionPace = 0.69
         settings.lyricAnimation = .scale
         settings.lyricAlignment = .leading
         settings.lyricPositionY = 0.71
@@ -72,10 +68,6 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.backgroundLife, RenderSettings().backgroundLife)
         XCTAssertEqual(settings.backgroundOverlayOpacity, 0)
         XCTAssertTrue(settings.smartBlurEnabled)
-        XCTAssertTrue(settings.smartDirectorEnabled)
-        XCTAssertEqual(settings.smartVisualMood, .automatic)
-        XCTAssertEqual(settings.smartOverallIntensity, RenderSettings().smartOverallIntensity)
-        XCTAssertEqual(settings.smartMotionPace, RenderSettings().smartMotionPace)
         XCTAssertTrue(settings.smartCompositionEnabled)
         XCTAssertEqual(settings.subjectEdgeLight, RenderSettings().subjectEdgeLight)
         XCTAssertEqual(settings.introDuration, 12)
@@ -84,6 +76,22 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.authorName, "鹿鸣松(Lumisum)")
         XCTAssertTrue(settings.introShowsDate)
         XCTAssertEqual(settings.introAnimationStyle, .luminousRise)
+        XCTAssertEqual(settings.lyricAnimation, .scroll)
+        XCTAssertEqual(settings.lyricAnimationDuration, 0.62)
+    }
+
+    func testProjectsSavedWithDirectorFieldsOpenAsDirectManualSettings() throws {
+        let data = Data(#"{"smartDirectorEnabled":true,"smartVisualMood":"电影","smartOverallIntensity":0.9,"visualizerAutoSelection":true,"visualizerAutoPosition":true,"template":"Cinema","visualizer":"Border","visualizerPositionY":0.67,"lyricAnimation":"柔和淡入"}"#.utf8)
+        let settings = try JSONDecoder().decode(RenderSettings.self, from: data)
+        XCTAssertEqual(settings.template, .cinema)
+        XCTAssertEqual(settings.visualizer, .border)
+        XCTAssertEqual(settings.visualizerPositionY, 0.67)
+        XCTAssertEqual(settings.lyricAnimation, .fade)
+
+        let saved = try JSONEncoder().encode(settings)
+        let json = try XCTUnwrap(String(data: saved, encoding: .utf8))
+        XCTAssertFalse(json.contains("smartDirector"))
+        XCTAssertFalse(json.contains("visualizerAuto"))
     }
 
     func testAnalyzerStreamsAudioAndDetectsTransientFeatures() throws {

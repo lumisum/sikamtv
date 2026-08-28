@@ -38,18 +38,7 @@ struct VisualizerEngine {
         )
         let desiredCenter = CGPoint(x: size.width * 0.5, y: size.height * settings.visualizerPositionY)
         let renderScale = size.width / max(1, settings.aspectRatio.size1080.width)
-        let minimum = min(size.width, size.height)
-        let verticalFootprint: CGFloat
-        switch kind {
-        case .circle, .prism, .kaleidoscope: verticalFootprint = minimum * 0.22 * settings.visualizerScale
-        case .ripple, .nebula, .starfield: verticalFootprint = minimum * 0.20 * settings.visualizerScale
-        case .aurora: verticalFootprint = minimum * 0.15 * settings.visualizerScale
-        case .wave, .spectrum, .mirror: verticalFootprint = minimum * 0.06
-        }
-        let center = CGPoint(
-            x: desiredCenter.x,
-            y: min(size.height - verticalFootprint, max(verticalFootprint, desiredCenter.y))
-        )
+        let center = desiredCenter
         appendAmbientScene(
             &mesh,
             size: size,
@@ -60,7 +49,9 @@ struct VisualizerEngine {
             staticBackground: staticBackground
         )
         guard settings.visualizerStrength > 0.001 else { return mesh }
-        appendAura(&mesh, center: center, size: size, features: frame, settings: settings, palette: palette)
+        if kind != .border {
+            appendAura(&mesh, center: center, size: size, features: frame, settings: settings, palette: palette)
+        }
         switch kind {
         case .wave:
             appendWave(&mesh, center: center, size: size, features: frame, settings: settings, palette: palette, time: time, renderScale: renderScale)
@@ -82,6 +73,8 @@ struct VisualizerEngine {
             appendKaleidoscope(&mesh, center: center, size: size, features: frame, settings: settings, palette: palette, time: time, renderScale: renderScale)
         case .starfield:
             appendStarfield(&mesh, center: center, size: size, features: frame, settings: settings, palette: palette, time: time, renderScale: renderScale)
+        case .border:
+            appendBorderFlow(&mesh, size: size, features: frame, settings: settings, palette: palette, time: time, renderScale: renderScale)
         }
         return mesh
     }
@@ -583,6 +576,108 @@ struct VisualizerEngine {
             let halo = dot * (2.2 + glow * 1.4)
             appendCircle(&mesh.additive, center: SIMD2(Float(x), Float(y)), radius: Float(halo / 2), color: gpuColor(color, alpha: 0.08 + intensity * 0.12))
             appendCircle(&mesh.additive, center: SIMD2(Float(x), Float(y)), radius: Float(dot / 2), color: gpuColor(color, alpha: 0.16 + intensity * (0.22 + pseudo(seed) * 0.28)))
+        }
+    }
+
+    private func appendBorderFlow(
+        _ mesh: inout VisualizerMesh,
+        size: CGSize,
+        features: AudioFrameFeatures,
+        settings: RenderSettings,
+        palette: VisualPalette,
+        time: Double,
+        renderScale: CGFloat
+    ) {
+        let values = features.spectrum
+        guard !values.isEmpty else { return }
+        let minimum = min(size.width, size.height)
+        let scale = CGFloat(settings.visualizerScale)
+        let inset = max(8 * renderScale, minimum * (0.030 + max(0, 1.05 - scale) * 0.035))
+        let center = SIMD2<Float>(Float(size.width * 0.5), Float(size.height * 0.5))
+        let halfWidth = max(minimum * 0.18, size.width * 0.5 - inset)
+        let halfHeight = max(minimum * 0.18, size.height * 0.5 - inset)
+        let pointCount = max(260, Int(260 + settings.visualizerDensity * 180))
+        let glow = CGFloat(settings.visualizerGlow)
+        let response = CGFloat(settings.visualizerStrength)
+        let drift = CGFloat(time) * (0.010 + CGFloat(features.buildup) * 0.012)
+
+        for corner in 0..<4 {
+            let x = corner % 2 == 0 ? inset : size.width - inset
+            let y = corner < 2 ? inset : size.height - inset
+            let color = palette.ribbon(corner)
+            appendRadial(
+                &mesh.radials,
+                center: CGPoint(x: x, y: y),
+                radiusX: minimum * (0.18 + CGFloat(features.bass) * 0.045),
+                radiusY: minimum * (0.18 + CGFloat(features.mid) * 0.035),
+                color: gpuColor(color, alpha: glow * (0.020 + CGFloat(features.loudness) * 0.028 + CGFloat(features.climax) * 0.025))
+            )
+        }
+
+        for layer in 0..<4 {
+            var points: [SIMD2<Float>] = []
+            points.reserveCapacity(pointCount)
+            let layerPhase = CGFloat(layer) * 0.073
+            for index in 0..<pointCount {
+                let progress = CGFloat(index) / CGFloat(pointCount)
+                let angle = (progress + drift + layerPhase) * .pi * 2 - .pi / 2
+                let cosine = cos(angle)
+                let sine = sin(angle)
+                let exponent: CGFloat = 0.36
+                let shapedX = cosine.sign == .minus ? -pow(abs(cosine), exponent) : pow(abs(cosine), exponent)
+                let shapedY = sine.sign == .minus ? -pow(abs(sine), exponent) : pow(abs(sine), exponent)
+                let base = SIMD2<Float>(
+                    center.x + Float(shapedX * halfWidth),
+                    center.y + Float(shapedY * halfHeight)
+                )
+                var outward = base - center
+                let length = max(0.001, simd_length(outward))
+                outward /= length
+                let spectralProgress = (progress + layerPhase).truncatingRemainder(dividingBy: 1)
+                let mirrored = spectralProgress <= 0.5 ? spectralProgress * 2 : (1 - spectralProgress) * 2
+                let source = min(values.count - 1, Int(pow(mirrored, 1.22) * CGFloat(values.count - 1)))
+                let spectral = CGFloat(values[source])
+                let pulse = pow(max(0, spectral), 1.16) * minimum * (0.018 + CGFloat(layer) * 0.0035) * response
+                let breathing = sin(angle * CGFloat(2 + layer) + CGFloat(time) * (0.16 + CGFloat(layer) * 0.025))
+                    * minimum * 0.0025 * CGFloat(features.mid)
+                let beat = CGFloat(features.beat + features.transient * 0.45) * minimum * 0.0045 * (layer == 0 ? 1 : 0.45)
+                points.append(base - outward * Float(pulse + breathing + beat + CGFloat(layer) * 1.8 * renderScale))
+            }
+            let color = palette.ribbon(layer)
+            let wideAlpha = 0.018 + CGFloat(features.loudness) * 0.020 + CGFloat(features.climax) * 0.018
+            appendPolyline(
+                &mesh.additive,
+                points: points,
+                width: Float((18 + glow * 20 + CGFloat(layer) * 3) * renderScale),
+                color: gpuColor(color, alpha: wideAlpha),
+                closed: true
+            )
+            appendPolyline(
+                &mesh.soft,
+                points: points,
+                width: Float((4.8 + CGFloat(layer) * 1.2) * renderScale),
+                color: gpuColor(color, alpha: 0.055 + CGFloat(features.energy) * 0.050),
+                closed: true
+            )
+            appendPolyline(
+                &mesh.additive,
+                points: points,
+                width: Float((layer == 0 ? 1.35 : 0.72) * renderScale),
+                color: gpuColor(layer == 0 ? palette.highlight : color, alpha: layer == 0 ? 0.34 + CGFloat(features.high) * 0.18 : 0.12),
+                closed: true
+            )
+        }
+
+        let edgeCenters = [
+            CGPoint(x: size.width * 0.5, y: inset),
+            CGPoint(x: size.width - inset, y: size.height * 0.5),
+            CGPoint(x: size.width * 0.5, y: size.height - inset),
+            CGPoint(x: inset, y: size.height * 0.5)
+        ]
+        for (index, point) in edgeCenters.enumerated() {
+            let band = CGFloat(features.spectrum[min(values.count - 1, index * max(1, values.count / 4))])
+            let radius = minimum * (0.028 + band * 0.034 + CGFloat(features.beat) * 0.008)
+            appendRadial(&mesh.radials, center: point, radiusX: radius * 2.8, radiusY: radius, color: gpuColor(palette.ribbon(index + 1), alpha: 0.035 + band * 0.065))
         }
     }
 

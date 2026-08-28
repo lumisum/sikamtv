@@ -53,7 +53,6 @@ final class RenderEngine {
     private var subjectMaskTextures: [String: MTLTexture] = [:]
     private var lyricLuminanceCache: [LyricLuminanceCacheKey: LyricLuminanceSample] = [:]
     private var sceneColorCache: [String: SceneColorProfile] = [:]
-    private var songProfileCache: [String: SmartSongProfile] = [:]
     private let blurFilter = CIFilter(name: "CIGaussianBlur")
     private let colorFilter = CIFilter(name: "CIColorControls")
     private var lyricTexture: MTLTexture?
@@ -224,21 +223,8 @@ final class RenderEngine {
         fontName: String
     ) -> PreparedFrame {
         let sceneProfile = cachedSceneProfile(identifier: backgroundIdentifier, image: background)
-        let songProfile = cachedSongProfile(analysis)
-        let direction = SmartDirector.direct(base: settings, song: songProfile, scene: sceneProfile)
-        var effectiveSettings = direction.settings
-
-        if effectiveSettings.smartCompositionEnabled, let background {
-            let useNext = (backgroundTimeline?.transitionProgress ?? 0) > 0.55 && nextBackgroundDuration <= 0
-            let profileImage = useNext ? (nextBackground ?? background) : background
-            let profileIdentifier = useNext ? (nextBackgroundIdentifier ?? backgroundIdentifier) : backgroundIdentifier
-            let profileDuration = useNext ? nextBackgroundDuration : backgroundDuration
-            if profileDuration <= 0,
-               let profile = VisionSubjectMaskCache.shared.layoutProfile(for: profileIdentifier, image: profileImage),
-               profile.supportsSpatialComposition {
-                effectiveSettings = Self.smartCompositionSettings(effectiveSettings, profile: profile, time: time)
-            }
-        }
+        let effectiveSettings = settings
+        let palette = settings.template.palette.adapted(to: sceneProfile, strength: 0.58)
 
         var layers: [MetalRenderer.TextureLayer] = []
         var placeholder: [GPUVertex] = []
@@ -264,7 +250,7 @@ final class RenderEngine {
                 appendBackgroundLayer(&layers, image: background, identifier: backgroundIdentifier, mediaDuration: backgroundDuration, localTime: state.currentLocalTime, segmentDuration: state.segmentDuration, alpha: 1, offsetX: 0, extraZoom: 1, size: size, settings: effectiveSettings)
             }
         } else {
-            placeholder = visualizerEngine.placeholder(size: size, time: time, palette: direction.palette)
+            placeholder = visualizerEngine.placeholder(size: size, time: time, palette: palette)
         }
 
         let features = analysis?.frame(at: time) ?? .silent
@@ -275,7 +261,7 @@ final class RenderEngine {
             features: features,
             settings: effectiveSettings,
             time: time,
-            palette: direction.palette,
+            palette: palette,
             staticBackground: background != nil && backgroundDuration <= 0
         )
         let overlayAlpha = Float(min(1, max(0, effectiveSettings.backgroundOverlayOpacity)))
@@ -296,7 +282,7 @@ final class RenderEngine {
                 size: size,
                 settings: effectiveSettings
             )
-            lyricsLayer = makeLyricsLayer(lyrics, size: size, time: time, settings: effectiveSettings, fontName: fontName, features: features, contrast: lyricContrast, palette: direction.palette)
+            lyricsLayer = makeLyricsLayer(lyrics, size: size, time: time, settings: effectiveSettings, fontName: fontName, features: features, contrast: lyricContrast, palette: palette)
         } else {
             lyricsLayer = nil
         }
@@ -306,7 +292,7 @@ final class RenderEngine {
             settings: effectiveSettings,
             fontName: fontName,
             features: directedFeatures,
-            palette: direction.palette
+            palette: palette
         )
         let postProcess = PostProcessSettings(
             time: time,
@@ -363,49 +349,10 @@ final class RenderEngine {
         guard let image else { return nil }
         let key = identifier ?? "image-\(image.width)x\(image.height)-\(ObjectIdentifier(image).hashValue)"
         if let cached = sceneColorCache[key] { return cached }
-        guard let profile = SmartDirector.analyzeScene(image) else { return nil }
+        guard let profile = SceneColorAnalyzer.analyze(image) else { return nil }
         if sceneColorCache.count > 48 { sceneColorCache.removeAll(keepingCapacity: true) }
         sceneColorCache[key] = profile
         return profile
-    }
-
-    private func cachedSongProfile(_ analysis: AudioAnalysis?) -> SmartSongProfile {
-        guard let analysis else { return .silent }
-        let key = "\(analysis.version)-\(analysis.duration)-\(analysis.amplitudes.count)-\(analysis.energy.first ?? 0)-\(analysis.energy.last ?? 0)"
-        if let cached = songProfileCache[key] { return cached }
-        let profile = SmartDirector.analyzeSong(analysis)
-        if songProfileCache.count > 12 { songProfileCache.removeAll(keepingCapacity: true) }
-        songProfileCache[key] = profile
-        return profile
-    }
-
-    static func smartCompositionSettings(_ settings: RenderSettings, profile: VisionLayoutProfile, time: Double) -> RenderSettings {
-        var result = settings
-        let subject = profile.subjectBounds.insetBy(dx: -0.035, dy: -0.055)
-        func verticalOverlap(center: Double, halfHeight: Double) -> Double {
-            let lower = max(CGFloat(center - halfHeight), subject.minY)
-            let upper = min(CGFloat(center + halfHeight), subject.maxY)
-            return Double(max(0, upper - lower))
-        }
-
-        let visualCandidates = [0.24, 0.34, 0.48, 0.64]
-        result.visualizerPositionY = visualCandidates.min { first, second in
-            let firstScore = verticalOverlap(center: first, halfHeight: 0.13) * 5.5 + abs(first - settings.visualizerPositionY) * 0.22
-            let secondScore = verticalOverlap(center: second, halfHeight: 0.13) * 5.5 + abs(second - settings.visualizerPositionY) * 0.22
-            return firstScore < secondScore
-        } ?? settings.visualizerPositionY
-
-        let lyricCandidates = [0.76, 0.60, 0.44]
-        result.lyricPositionY = lyricCandidates.min { first, second in
-            func score(_ candidate: Double) -> Double {
-                let subjectPenalty = verticalOverlap(center: candidate, halfHeight: 0.105) * 7.0
-                let visualPenalty = max(0, 0.20 - abs(candidate - result.visualizerPositionY)) * 2.4
-                let introPenalty = time < settings.introDuration && candidate > 0.68 ? 0.34 : 0
-                return subjectPenalty + visualPenalty + abs(candidate - settings.lyricPositionY) * 0.18 + introPenalty
-            }
-            return score(first) < score(second)
-        } ?? settings.lyricPositionY
-        return result
     }
 
     private func appendBackgroundLayer(
@@ -897,34 +844,38 @@ final class RenderEngine {
         for index in max(0, current - 1)...min(lines.count - 1, current + 1) {
             let relation = index - current
             var y = centerY - CGFloat(relation) * lineHeight
-            var alpha = relation == 0 ? CGFloat(1) : CGFloat(settings.lyricInactiveOpacity)
-            if relation != 0 {
-                alpha = min(0.76, alpha + contrast.inactiveOpacityBoost)
-            }
+            let inactiveAlpha = min(0.76, CGFloat(settings.lyricInactiveOpacity) + contrast.inactiveOpacityBoost)
+            let alpha = Self.lyricTransitionOpacity(
+                relation: relation,
+                progress: progress,
+                inactive: inactiveAlpha,
+                animation: settings.lyricAnimation
+            )
+            let emphasis = Self.lyricTransitionEmphasis(
+                relation: relation,
+                progress: progress,
+                animation: settings.lyricAnimation
+            )
             var scale: CGFloat = 1
             var glowBoost: CGFloat = 1
             var karaoke: CGFloat? = nil
             switch settings.lyricAnimation {
             case .scroll:
                 y -= (1 - progress) * lineHeight
-                if relation == 0 { alpha = 0.42 + progress * 0.58 }
             case .fade:
-                if relation == 0 { alpha = 0.18 + progress * 0.82 }
+                break
             case .scale:
                 if relation == 0 {
-                    alpha = 0.28 + progress * 0.72
                     scale = 0.86 + progress * 0.16 + beat * 0.03
                     glowBoost = 0.85 + progress * 0.35
                 }
             case .karaoke:
                 if relation == 0 {
-                    alpha = 0.55 + progress * 0.45
                     karaoke = karaokeProgress
                     glowBoost = 0.9 + beat * 0.35
                 }
             case .bloom:
                 if relation == 0 {
-                    alpha = 0.22 + progress * 0.78
                     scale = 0.92 + progress * 0.10 + beat * 0.04
                     y += (1 - progress) * fontSize * 0.18
                     glowBoost = 0.7 + progress * 0.85 + beat * 0.45
@@ -932,13 +883,9 @@ final class RenderEngine {
             case .none:
                 break
             }
-            let isCurrent = relation == 0
-            let fillColor: CGColor
-            if isCurrent {
-                fillColor = VisualPalette.mix(CGColor(gray: 1, alpha: 1), palette.lyric, 0.42).copy(alpha: alpha) ?? palette.lyric
-            } else {
-                fillColor = VisualPalette.mix(CGColor(gray: 1, alpha: 1), palette.secondary, 0.36).copy(alpha: alpha) ?? palette.secondary
-            }
+            let activeColor = VisualPalette.mix(CGColor(gray: 1, alpha: 1), palette.lyric, 0.42)
+            let inactiveColor = VisualPalette.mix(CGColor(gray: 1, alpha: 1), palette.secondary, 0.36)
+            let fillColor = VisualPalette.mix(inactiveColor, activeColor, emphasis).copy(alpha: alpha) ?? activeColor
             drawText(
                 lines[index].text,
                 centerY: y,
@@ -951,8 +898,8 @@ final class RenderEngine {
                 secondaryGlowColor: palette.secondary,
                 alignment: settings.lyricAlignment,
                 scale: scale,
-                highlight: isCurrent,
-                glow: CGFloat(settings.lyricGlow) * 36 * renderScale * glowBoost * contrast.glowFactor,
+                emphasis: emphasis,
+                glow: CGFloat(settings.lyricGlow) * 36 * renderScale * glowBoost * contrast.glowFactor * (0.18 + emphasis * 0.82),
                 outlineAlpha: contrast.outlineAlpha,
                 outlineRadius: contrast.outlineRadius * renderScale,
                 karaokeProgress: karaoke,
@@ -960,6 +907,37 @@ final class RenderEngine {
                 in: context
             )
         }
+    }
+
+    static func lyricTransitionOpacity(
+        relation: Int,
+        progress: CGFloat,
+        inactive: CGFloat,
+        animation: LyricAnimation
+    ) -> CGFloat {
+        let low = min(1, max(0, inactive))
+        guard animation != .none else { return relation == 0 ? 1 : low }
+        let t = min(1, max(0, progress))
+        switch relation {
+        case 0:
+            return low + (1 - low) * t
+        case -1:
+            return 1 - (1 - low) * t
+        default:
+            return low
+        }
+    }
+
+    static func lyricTransitionEmphasis(
+        relation: Int,
+        progress: CGFloat,
+        animation: LyricAnimation
+    ) -> CGFloat {
+        guard animation != .none else { return relation == 0 ? 1 : 0 }
+        let t = min(1, max(0, progress))
+        if relation == 0 { return t }
+        if relation == -1 { return 1 - t }
+        return 0
     }
 
     private func drawText(
@@ -974,7 +952,7 @@ final class RenderEngine {
         secondaryGlowColor: CGColor,
         alignment: LyricAlignment,
         scale: CGFloat,
-        highlight: Bool,
+        emphasis: CGFloat,
         glow: CGFloat,
         outlineAlpha: CGFloat,
         outlineRadius: CGFloat,
@@ -1014,10 +992,10 @@ final class RenderEngine {
             context.translateBy(x: -anchorX, y: -centerY)
         }
 
-        if highlight, glow > 0 {
+        if emphasis > 0.001, glow > 0 {
             context.saveGState()
             context.setBlendMode(.plusLighter)
-            if let inner = VisualPalette.mix(glowColor, secondaryGlowColor, 0.4).copy(alpha: 0.14 + beat * 0.10),
+            if let inner = VisualPalette.mix(glowColor, secondaryGlowColor, 0.4).copy(alpha: (0.14 + beat * 0.10) * emphasis),
                let outer = glowColor.copy(alpha: 0),
                let blob = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [inner, outer] as CFArray, locations: [0, 1]) {
                 context.drawRadialGradient(
@@ -1058,7 +1036,7 @@ final class RenderEngine {
         context.restoreGState()
 
         context.textPosition = CGPoint(x: x, y: textY)
-        if highlight, glow > 0 {
+        if emphasis > 0.001, glow > 0 {
             context.saveGState()
             context.setBlendMode(.plusLighter)
             let colorOffset = max(0.6, min(2.4, glow * 0.045))
@@ -1066,26 +1044,26 @@ final class RenderEngine {
                 string: content,
                 attributes: [
                     .font: activeFont,
-                    .foregroundColor: secondaryGlowColor.copy(alpha: 0.15) ?? secondaryGlowColor
+                    .foregroundColor: secondaryGlowColor.copy(alpha: 0.15 * emphasis) ?? secondaryGlowColor
                 ]
             )
             let chromaticLine = CTLineCreateWithAttributedString(chromatic)
             context.setShadow(
                 offset: CGSize(width: -colorOffset, height: colorOffset * 0.45),
                 blur: min(30, glow * 0.72),
-                color: secondaryGlowColor.copy(alpha: 0.30)
+                color: secondaryGlowColor.copy(alpha: 0.30 * emphasis)
             )
             context.textPosition = CGPoint(x: x + colorOffset, y: textY)
             CTLineDraw(chromaticLine, context)
             context.restoreGState()
 
             context.textPosition = CGPoint(x: x, y: textY)
-            context.setShadow(offset: .zero, blur: min(22, glow * 0.42), color: glowColor.copy(alpha: 0.40))
+            context.setShadow(offset: .zero, blur: min(22, glow * 0.42), color: glowColor.copy(alpha: 0.40 * emphasis))
         }
         CTLineDraw(line, context)
         context.setShadow(offset: .zero, blur: 0, color: nil)
 
-        if highlight, let karaokeProgress {
+        if emphasis > 0.001, let karaokeProgress {
             let utf16Count = (content as NSString).length
             let shown = min(utf16Count, max(0, Int(ceil(Double(karaokeProgress) * Double(utf16Count)))))
             let wipe = CTLineGetOffsetForStringIndex(line, shown, nil)
@@ -1099,7 +1077,7 @@ final class RenderEngine {
             context.restoreGState()
         }
 
-        if highlight {
+        if emphasis > 0.001 {
             let underlineWidth = max(18, bounds.width * (karaokeProgress ?? (0.42 + beat * 0.2)))
             let underlineX: CGFloat
             switch alignment {
@@ -1108,7 +1086,7 @@ final class RenderEngine {
             case .trailing: underlineX = x + bounds.width - underlineWidth
             }
             context.setBlendMode(.plusLighter)
-            context.setFillColor(glowColor.copy(alpha: 0.20 + beat * 0.16) ?? glowColor)
+            context.setFillColor(glowColor.copy(alpha: (0.20 + beat * 0.16) * emphasis) ?? glowColor)
             context.fill(CGRect(x: underlineX, y: textY - glow * 0.08, width: underlineWidth, height: max(1.6, glow * 0.045)))
         }
         context.restoreGState()

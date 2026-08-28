@@ -158,6 +158,7 @@ enum VisualizerKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case nebula = "Nebula"
     case kaleidoscope = "Kaleidoscope"
     case starfield = "Starfield"
+    case border = "Border"
 
     var id: String { rawValue }
     var title: String {
@@ -172,6 +173,7 @@ enum VisualizerKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .nebula: return "星尘星云"
         case .kaleidoscope: return "万象花镜"
         case .starfield: return "星河跃迁"
+        case .border: return "流光边界"
         }
     }
 
@@ -187,6 +189,7 @@ enum VisualizerKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .nebula: return "高频点亮星尘，低频推动星云呼吸"
         case .kaleidoscope: return "镜像频段生成旋转绽放的对称花瓣"
         case .starfield: return "响度控制纵深，高频化作跃迁星轨"
+        case .border: return "频谱沿画面四周流动，形成柔和包裹感"
         }
     }
 }
@@ -323,6 +326,17 @@ enum LyricAnimation: String, CaseIterable, Identifiable, Codable, Sendable {
     case bloom = "光晕绽放"
     case none = "无动画"
     var id: String { rawValue }
+
+    var subtitle: String {
+        switch self {
+        case .scroll: return "三行歌词连续上移，适合大多数歌曲"
+        case .fade: return "上一句与当前句柔和交叉淡化"
+        case .scale: return "当前句轻微放大并自然显现"
+        case .karaoke: return "按歌词持续时间逐字点亮"
+        case .bloom: return "歌词伴随柔光与轻微上浮出现"
+        case .none: return "在时间点直接切换，不添加过渡"
+        }
+    }
 }
 
 enum LyricAlignment: String, CaseIterable, Identifiable, Codable, Sendable {
@@ -339,21 +353,7 @@ enum IntroAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendable 
     var id: String { rawValue }
 }
 
-enum SmartVisualMood: String, CaseIterable, Identifiable, Codable, Sendable {
-    case automatic = "自动"
-    case natural = "自然"
-    case ethereal = "空灵"
-    case cinema = "电影"
-    case vivid = "炫丽"
-
-    var id: String { rawValue }
-}
-
 struct RenderSettings: Codable, Equatable, Sendable {
-    var smartDirectorEnabled: Bool = true
-    var smartVisualMood: SmartVisualMood = .automatic
-    var smartOverallIntensity: Double = 0.62
-    var smartMotionPace: Double = 0.48
     var aspectRatio: AspectRatio = .portrait
     var template: VisualTemplate = .ethereal
     var visualizer: VisualizerKind = .aurora
@@ -397,8 +397,8 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var lyricLineSpacing: Double = 1.85
     var lyricInactiveOpacity: Double = 0.24
     var lyricGlow: Double = 0.82
-    var lyricAnimationDuration: Double = 0.52
-    var lyricAnimation: LyricAnimation = .bloom
+    var lyricAnimationDuration: Double = 0.62
+    var lyricAnimation: LyricAnimation = .scroll
     var lyricAlignment: LyricAlignment = .center
     var fontPostScriptName: String = FontManager.defaultPostScriptName
 
@@ -414,7 +414,6 @@ struct RenderSettings: Codable, Equatable, Sendable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case smartDirectorEnabled, smartVisualMood, smartOverallIntensity, smartMotionPace
         case aspectRatio, template, visualizer, blur, smartBlurEnabled, darkness, saturation
         case backgroundOverlayRed, backgroundOverlayGreen, backgroundOverlayBlue, backgroundOverlayOpacity
         case backgroundTransition, backgroundTransitionDuration, backgroundMotionStyle
@@ -430,10 +429,6 @@ struct RenderSettings: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = RenderSettings()
-        smartDirectorEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartDirectorEnabled) ?? defaults.smartDirectorEnabled
-        smartVisualMood = try container.decodeIfPresent(SmartVisualMood.self, forKey: .smartVisualMood) ?? defaults.smartVisualMood
-        smartOverallIntensity = try container.decodeIfPresent(Double.self, forKey: .smartOverallIntensity) ?? defaults.smartOverallIntensity
-        smartMotionPace = try container.decodeIfPresent(Double.self, forKey: .smartMotionPace) ?? defaults.smartMotionPace
         aspectRatio = try container.decodeIfPresent(AspectRatio.self, forKey: .aspectRatio) ?? defaults.aspectRatio
         template = try container.decodeIfPresent(VisualTemplate.self, forKey: .template) ?? defaults.template
         visualizer = try container.decodeIfPresent(VisualizerKind.self, forKey: .visualizer) ?? defaults.visualizer
@@ -491,10 +486,6 @@ struct RenderSettings: Codable, Equatable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(smartDirectorEnabled, forKey: .smartDirectorEnabled)
-        try container.encode(smartVisualMood, forKey: .smartVisualMood)
-        try container.encode(smartOverallIntensity, forKey: .smartOverallIntensity)
-        try container.encode(smartMotionPace, forKey: .smartMotionPace)
         try container.encode(aspectRatio, forKey: .aspectRatio)
         try container.encode(template, forKey: .template)
         try container.encode(visualizer, forKey: .visualizer)

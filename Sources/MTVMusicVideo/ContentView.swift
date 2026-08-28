@@ -9,15 +9,39 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             AssetsPanel()
-                .frame(width: 270)
-            Divider()
+                .frame(width: 252)
             PreviewPanel(previewImage: $previewImage)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
             SettingsPanel()
-                .frame(width: 285)
+                .frame(width: 318)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: .underPageBackgroundColor))
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button(action: workspace.importAssets) {
+                    Label("导入素材", systemImage: "plus")
+                }
+                .help("导入图片、视频、音频或字幕")
+            }
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 7) {
+                    Image(systemName: "play.rectangle.fill")
+                        .foregroundStyle(Color.accentColor)
+                    Text("SikaMTV")
+                        .font(.headline)
+                    Text("\(workspace.settings.aspectRatio.rawValue) · 1080P")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button { workspace.exportVideo() } label: {
+                    Label(workspace.isExporting ? "生成中" : "生成视频", systemImage: workspace.isExporting ? "hourglass" : "film")
+                }
+                .disabled(workspace.isExporting || workspace.isAnalyzingAudio || !workspace.hasRequiredMedia)
+                .help(workspace.hasRequiredMedia ? "生成 MP4 视频" : "请先准备背景、音乐和字幕")
+            }
+        }
         .task { refreshPreview() }
         .onReceive(workspace.previewUpdates.debounce(for: .milliseconds(16), scheduler: RunLoop.main)) { _ in refreshPreview() }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
@@ -68,19 +92,18 @@ struct AssetsPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("资源管理器").font(.title3.weight(.semibold))
-                        Text("统一管理项目素材").font(.caption2).foregroundStyle(.secondary)
+                        Text("素材").font(.headline)
+                        Text("项目资源库").font(.caption2).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button(action: workspace.importAssets) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 13, weight: .semibold))
-                            .frame(width: 27, height: 27)
+                        Image(systemName: "plus").frame(width: 16, height: 16)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .help("同时导入图片、视频、音频或字幕")
                 }
 
@@ -95,8 +118,9 @@ struct AssetsPanel: View {
                     }
                 }
                 .padding(.horizontal, 9)
-                .frame(height: 30)
-                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
+                .frame(height: 28)
+                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.08)))
 
                 HStack {
                     Picker("资源类型", selection: $filter) {
@@ -112,7 +136,7 @@ struct AssetsPanel: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(16)
+            .padding(14)
 
             Divider()
 
@@ -134,7 +158,7 @@ struct AssetsPanel: View {
                         }
                     }
                 }
-                .padding(12)
+                .padding(10)
             }
             .frame(maxHeight: .infinity)
 
@@ -143,9 +167,10 @@ struct AssetsPanel: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
+                .padding(11)
         }
-        .background(isDropTargeted ? Color.accentColor.opacity(0.08) : Color.clear)
+        .background(isDropTargeted ? Color.accentColor.opacity(0.08) : Color(nsColor: .controlBackgroundColor).opacity(0.72))
+        .overlay(alignment: .trailing) { Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1) }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
             for provider in providers {
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
@@ -240,7 +265,10 @@ private struct ResourceLibraryEmptyState: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 34)
+        .padding(.vertical, 30)
+        .padding(.horizontal, 10)
+        .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.07), style: StrokeStyle(lineWidth: 1, dash: [5])))
     }
 }
 
@@ -279,9 +307,9 @@ private struct ResourceLibraryRow: View {
                 .foregroundStyle(.tertiary)
                 .help("从素材库移除")
         }
-        .padding(8)
-        .background(isActive ? Color.green.opacity(0.055) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(isActive ? Color.green.opacity(0.20) : Color.clear))
+        .padding(7)
+        .background(isActive ? Color.accentColor.opacity(0.09) : Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(isActive ? Color.accentColor.opacity(0.24) : Color.primary.opacity(0.055)))
         .onDrag { NSItemProvider(object: item.url as NSURL) }
         .contextMenu {
             Button("加入工作区", action: activate)
@@ -350,30 +378,54 @@ struct PreviewPanel: View {
     @Binding var previewImage: NSImage?
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("预览").font(.headline)
+                    Text("预览与最终输出共用同一渲染画面")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Label(workspace.settings.aspectRatio.rawValue, systemImage: "aspectratio")
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(.quaternary, in: Capsule())
+                Text("30 FPS")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
             ZStack {
-                RoundedRectangle(cornerRadius: 16).fill(Color.black.opacity(0.18))
+                RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.72))
                 if let previewImage {
                     Image(nsImage: previewImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .shadow(radius: 18)
-                        .padding(20)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .shadow(color: .black.opacity(0.42), radius: 22, y: 8)
+                        .padding(16)
                 } else {
                     VStack(spacing: 10) {
-                        Image(systemName: "sparkles.tv").font(.system(size: 48)).foregroundStyle(.secondary)
-                        Text("导入素材后开始预览").foregroundStyle(.secondary)
+                        Image(systemName: "play.rectangle.on.rectangle")
+                            .font(.system(size: 42, weight: .light))
+                            .foregroundStyle(.tertiary)
+                        Text("准备好素材后，画面会显示在这里")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
             .aspectRatio(previewAspectRatio, contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.08)))
             WorkspaceDropArea()
-                .frame(height: 154)
+                .frame(height: 132)
             PlaybackControls()
         }
-        .padding(22)
+        .padding(18)
+        .background(Color(nsColor: .underPageBackgroundColor))
     }
 
     private var previewAspectRatio: CGFloat {
@@ -387,13 +439,13 @@ struct WorkspaceDropArea: View {
     @State private var isTargeted = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             workspaceHeader
             workspaceSlots
         }
-        .padding(13)
-        .background { RoundedRectangle(cornerRadius: 13).fill(dropBackground) }
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(dropBorder, lineWidth: 1))
+        .padding(11)
+        .background { RoundedRectangle(cornerRadius: 11).fill(dropBackground) }
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(dropBorder, lineWidth: 1))
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isTargeted) { providers in
             for provider in providers {
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
@@ -413,7 +465,7 @@ struct WorkspaceDropArea: View {
 
     private var workspaceHeader: some View {
         HStack {
-            Label("项目素材", systemImage: "rectangle.3.group.fill").font(.headline)
+            Label("工作区", systemImage: "rectangle.3.group").font(.subheadline.weight(.semibold))
             Text("\(readyCount)/3 已就绪")
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(readyColor)
@@ -421,9 +473,8 @@ struct WorkspaceDropArea: View {
                 .padding(.vertical, 3)
                 .background { Capsule().fill(readyColor.opacity(0.10)) }
             Spacer()
-            Label("资源库素材拖到这里即可应用", systemImage: "hand.draw")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text("从左侧拖入即可应用")
+                .font(.caption2).foregroundStyle(.secondary)
         }
     }
 
@@ -468,7 +519,7 @@ struct WorkspaceDropArea: View {
     }
 
     private var dropBackground: Color {
-        isTargeted ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.028)
+        isTargeted ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor).opacity(0.62)
     }
 
     private var dropBorder: Color {
@@ -480,10 +531,10 @@ private struct ProjectBackgroundSlot: View {
     @EnvironmentObject private var workspace: WorkspaceState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("01").font(.caption2.monospacedDigit().weight(.bold)).foregroundStyle(.blue)
-                Label("画面背景", systemImage: "photo.stack.fill").font(.caption.weight(.semibold))
+                Image(systemName: "photo.stack.fill").foregroundStyle(.blue).frame(width: 17)
+                Text("画面背景").font(.caption.weight(.semibold))
                 Spacer()
                 if !workspace.backgrounds.isEmpty {
                     Menu {
@@ -503,9 +554,10 @@ private struct ProjectBackgroundSlot: View {
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(10)
-        .background(Color.blue.opacity(workspace.backgrounds.isEmpty ? 0.045 : 0.085), in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.blue.opacity(workspace.backgrounds.isEmpty ? 0.10 : 0.22)))
+        .padding(9)
+        .background(Color.primary.opacity(0.032), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .leading) { Capsule().fill(Color.blue.opacity(workspace.backgrounds.isEmpty ? 0.28 : 0.75)).frame(width: 3).padding(.vertical, 8) }
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.065)))
     }
 
     private var backgroundTitle: String {
@@ -530,10 +582,10 @@ private struct ProjectMaterialSlot: View {
     let clear: (() -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(number).font(.caption2.monospacedDigit().weight(.bold)).foregroundStyle(tint)
-                Label(title, systemImage: icon).font(.caption.weight(.semibold))
+                Image(systemName: icon).foregroundStyle(tint).frame(width: 17)
+                Text(title).font(.caption.weight(.semibold))
                 Spacer()
                 if let clear {
                     Button(action: clear) { Image(systemName: "xmark.circle") }
@@ -544,9 +596,10 @@ private struct ProjectMaterialSlot: View {
             Text(secondary).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(10)
-        .background(tint.opacity(isReady ? 0.085 : 0.045), in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(tint.opacity(isReady ? 0.22 : 0.10)))
+        .padding(9)
+        .background(Color.primary.opacity(0.032), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .leading) { Capsule().fill(tint.opacity(isReady ? 0.75 : 0.28)).frame(width: 3).padding(.vertical, 8) }
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.065)))
     }
 }
 
@@ -554,12 +607,14 @@ struct PlaybackControls: View {
     @EnvironmentObject private var workspace: WorkspaceState
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 7) {
             HStack(spacing: 12) {
                 Button { workspace.togglePlayback() } label: {
-                    Image(systemName: workspace.isPlaying ? "pause.fill" : "play.fill").frame(width: 18, height: 18)
+                    Image(systemName: workspace.isPlaying ? "pause.fill" : "play.fill")
+                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
                 .keyboardShortcut(.space, modifiers: [])
                 .disabled(workspace.audioURL == nil)
                 Text(formatTime(workspace.currentTime)).monospacedDigit().font(.caption)
@@ -583,6 +638,10 @@ struct PlaybackControls: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.bar, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.07)))
     }
 
     private func formatTime(_ time: Double) -> String {
@@ -606,6 +665,16 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case intro = "片头"
 
     var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .template: return "square.grid.2x2"
+        case .canvas: return "rectangle.on.rectangle"
+        case .visualizer: return "waveform.path.ecg"
+        case .lyrics: return "captions.bubble"
+        case .intro: return "textformat"
+        }
+    }
 }
 
 struct SettingsPanel: View {
@@ -614,31 +683,60 @@ struct SettingsPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("样式设置").font(.title3.weight(.semibold))
-                Picker("设置分类", selection: $selectedTab) {
-                    ForEach(SettingsTab.allCases) { Text($0.rawValue).tag($0) }
+            VStack(alignment: .leading, spacing: 11) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("检查器").font(.headline)
+                        Text("调整当前项目的画面与文字")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "slider.horizontal.3")
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+
+                HStack(spacing: 3) {
+                    ForEach(SettingsTab.allCases) { tab in
+                        Button {
+                            withAnimation(.easeOut(duration: 0.16)) { selectedTab = tab }
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: tab.icon)
+                                    .font(.system(size: 12, weight: .medium))
+                                Text(tab.rawValue).font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.secondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 40)
+                            .background(selectedTab == tab ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(tab.rawValue)
+                    }
+                }
+                .padding(3)
+                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.065)))
             }
-            .padding(18)
-            .padding(.bottom, 2)
+            .padding(14)
 
             Divider()
 
             ScrollView {
                 tabContent
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(18)
+                    .padding(14)
             }
             .frame(maxHeight: .infinity)
 
             Divider()
             exportFooter
-                .padding(18)
+                .padding(14)
                 .background(.bar)
         }
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+        .overlay(alignment: .leading) { Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1) }
     }
 
     @ViewBuilder
@@ -654,59 +752,41 @@ struct SettingsPanel: View {
 
     private var templateSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("智能导演", systemImage: "sparkles.rectangle.stack")
-                .font(.headline)
-            Toggle("自动理解音乐与画面", isOn: $workspace.settings.smartDirectorEnabled)
-            Text("自动选择模板、可视化、配色、画面动感与音乐响应；预览和导出使用同一套决定。")
+            InspectorSectionTitle(title: "视觉模板", icon: "wand.and.stars")
+            Text("选择后立即应用一套协调的画面、视觉和歌词参数，仍可到各分类继续调整。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-
-            if workspace.settings.smartDirectorEnabled {
-                Picker("视觉倾向", selection: $workspace.settings.smartVisualMood) {
-                    ForEach(SmartVisualMood.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.menu)
-                SliderRow(title: "整体强度", value: $workspace.settings.smartOverallIntensity, range: 0...1, displayMultiplier: 100, suffix: "%")
-                SliderRow(title: "画面节奏", value: $workspace.settings.smartMotionPace, range: 0...1, displayMultiplier: 100, suffix: "%")
-                Text("默认“自动”最省心；只需调整强度和节奏，其他参数由音乐与画面共同决定。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider()
-            DisclosureGroup("手动模板与专业设置") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(workspace.settings.smartDirectorEnabled ? "关闭智能导演后，下面的手动模板和各页专业参数会直接生效。" : "选择模板会设置画面、视觉和歌词的推荐参数，之后仍可分别微调。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("模板配色只用于音频可视化和文字光晕，不会给背景自动染色。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    ForEach(VisualTemplate.allCases) { template in
-                        Button { workspace.applyTemplate(template) } label: {
-                            HStack(spacing: 10) {
-                                HStack(spacing: 3) {
-                                    Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.warm) ?? .orange)).frame(width: 8, height: 8)
-                                    Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.accent) ?? .white)).frame(width: 10, height: 10)
-                                    Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.secondary) ?? .magenta)).frame(width: 8, height: 8)
-                                }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(template.title).font(.subheadline.weight(.medium))
-                                    Text(template.subtitle).font(.caption2).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if workspace.settings.template == template { Image(systemName: "checkmark.circle.fill") }
-                            }
-                            .padding(10)
-                            .background(workspace.settings.template == template ? Color.accentColor.opacity(0.13) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+            Text("背景综合色组会自动用于视觉和文字光晕，但不会修改背景本身。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(VisualTemplate.allCases) { template in
+                Button { workspace.applyTemplate(template) } label: {
+                    HStack(spacing: 10) {
+                        HStack(spacing: 3) {
+                            Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.warm) ?? .orange)).frame(width: 8, height: 8)
+                            Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.accent) ?? .white)).frame(width: 10, height: 10)
+                            Circle().fill(Color(nsColor: NSColor(cgColor: template.palette.secondary) ?? .magenta)).frame(width: 8, height: 8)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(workspace.settings.smartDirectorEnabled)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(template.title).font(.subheadline.weight(.medium))
+                            Text(template.subtitle).font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if workspace.settings.template == template {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
                     }
+                    .padding(10)
+                    .background(
+                        workspace.settings.template == template ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.028),
+                        in: RoundedRectangle(cornerRadius: 9)
+                    )
+                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(workspace.settings.template == template ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.06)))
                 }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -735,7 +815,7 @@ struct SettingsPanel: View {
                 SliderRow(title: "背景模糊", value: $workspace.settings.blur, range: 0...40, suffix: " px")
                 Toggle("智能保护图片主体", isOn: $workspace.settings.smartBlurEnabled)
                     .disabled(workspace.settings.blur <= 0)
-                Toggle("Vision 智能空间合成", isOn: $workspace.settings.smartCompositionEnabled)
+                Toggle("Vision 主体分层", isOn: $workspace.settings.smartCompositionEnabled)
                 SliderRow(title: "四角暗化", value: $workspace.settings.darkness, range: 0...0.8, displayMultiplier: 100, suffix: "%")
                 SliderRow(title: "饱和度", value: $workspace.settings.saturation, range: 0...1.6, displayMultiplier: 100, suffix: "%")
                 ColorPicker("背景色彩遮罩", selection: backgroundOverlayColor, supportsOpacity: false)
@@ -762,7 +842,7 @@ struct SettingsPanel: View {
                     }
                 }
                 .disabled(workspace.settings.backgroundMotionStyle == .off)
-                Text("Vision 会让可视化进入主体后方、沿轮廓包光，并自动避让主体安排歌词与视觉位置；分析结果只缓存一次。")
+                Text("Vision 只负责让可视化进入主体后方并沿轮廓包光，不会再修改歌词或视觉位置。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -850,25 +930,24 @@ struct SettingsPanel: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            SliderRow(title: "音乐感知", value: $workspace.settings.musicAwareness, range: 0...1, displayMultiplier: 100, suffix: "%")
-            Text("理解安静、蓄势、高潮和段落变化，并自动导演光影、色彩与运动。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             SliderRow(title: "响应强度", value: $workspace.settings.visualizerStrength, range: 0...1.25, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "垂直位置", value: $workspace.settings.visualizerPositionY, range: 0.12...0.72, displayMultiplier: 100, suffix: "%")
+                .disabled(workspace.settings.visualizer == .border)
             SliderRow(title: "整体大小", value: $workspace.settings.visualizerScale, range: 0.6...1.5, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "光晕", value: $workspace.settings.visualizerGlow, range: 0...1, displayMultiplier: 100, suffix: "%")
+            if workspace.settings.visualizer == .border {
+                Text("流光边界会自动环绕画布；“整体大小”用于调整边缘内缩程度。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             DisclosureGroup("高级视觉设置") {
                 VStack(alignment: .leading, spacing: 10) {
+                    SliderRow(title: "音乐感知", value: $workspace.settings.musicAwareness, range: 0...1, displayMultiplier: 100, suffix: "%")
                     SliderRow(title: "平滑", value: $workspace.settings.visualizerSmoothing, range: 0...1, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "密度", value: $workspace.settings.visualizerDensity, range: 0...1, displayMultiplier: 100, suffix: "%")
                     SliderRow(title: "炫丽度", value: $workspace.settings.visualizerBrilliance, range: 0...1, displayMultiplier: 100, suffix: "%")
                     SliderRow(title: "背景融合", value: $workspace.settings.visualizerIntegration, range: 0...1, displayMultiplier: 100, suffix: "%")
                     SliderRow(title: "拖尾长度", value: $workspace.settings.visualizerTrail, range: 0...0.85, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "色彩丰富度", value: $workspace.settings.visualizerColorRichness, range: 0...1, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "空间深度", value: $workspace.settings.visualizerDepth, range: 0...1, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "节拍冲击", value: $workspace.settings.visualizerBeatImpact, range: 0...1, displayMultiplier: 100, suffix: "%")
                 }
             }
             Text("通常只需调整响应、位置、大小和光晕；其余参数可保持模板推荐值。")
@@ -916,9 +995,14 @@ struct SettingsPanel: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
-            Picker("歌词动画", selection: $workspace.settings.lyricAnimation) {
+            Picker("歌词切换动画", selection: $workspace.settings.lyricAnimation) {
                 ForEach(LyricAnimation.allCases) { Text($0.rawValue).tag($0) }
             }
+            Text(workspace.settings.lyricAnimation.subtitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            SliderRow(title: "动画时长", value: $workspace.settings.lyricAnimationDuration, range: 0.18...1.2, precision: 1, suffix: " s")
             Picker("歌词对齐", selection: $workspace.settings.lyricAlignment) {
                 ForEach(LyricAlignment.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -931,7 +1015,6 @@ struct SettingsPanel: View {
                     SliderRow(title: "文字宽度", value: $workspace.settings.lyricWidth, range: 0.5...0.94, displayMultiplier: 100, suffix: "%")
                     SliderRow(title: "行间距", value: $workspace.settings.lyricLineSpacing, range: 1.2...2.5, precision: 1)
                     SliderRow(title: "次要歌词透明度", value: $workspace.settings.lyricInactiveOpacity, range: 0.08...0.72, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "动画时长", value: $workspace.settings.lyricAnimationDuration, range: 0.12...1.2, precision: 1, suffix: " s")
                 }
             }
             Label("智能对比度会根据歌词区域的背景亮度，自动增强轮廓、阴影和柔和底衬。", systemImage: "wand.and.stars")
@@ -1033,6 +1116,17 @@ struct SettingsPanel: View {
     }
 }
 
+private struct InspectorSectionTitle: View {
+    let title: String
+    let icon: String
+
+    var body: some View {
+        Label(title, systemImage: icon)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.primary)
+    }
+}
+
 struct SliderRow: View {
     let title: String
     @Binding var value: Double
@@ -1042,13 +1136,19 @@ struct SliderRow: View {
     var suffix = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(title).font(.caption)
+                Text(title).font(.caption.weight(.medium))
                 Spacer()
-                Text(String(format: "%.*f%@", precision, value * displayMultiplier, suffix)).font(.caption2).foregroundStyle(.secondary)
+                Text(String(format: "%.*f%@", precision, value * displayMultiplier, suffix))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.05), in: Capsule())
             }
             Slider(value: $value, in: range)
+                .controlSize(.small)
         }
     }
 }

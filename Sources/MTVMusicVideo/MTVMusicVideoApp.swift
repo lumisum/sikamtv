@@ -8,9 +8,10 @@ struct MTVMusicVideoApp: App {
         WindowGroup("SikaMTV") {
             ContentView()
                 .environmentObject(workspace)
-                .frame(minWidth: 1120, minHeight: 720)
+                .frame(minWidth: 1180, minHeight: 760)
         }
         .windowResizability(.contentSize)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(after: .newItem) {
                 Button("导入背景…") { workspace.importBackground() }
