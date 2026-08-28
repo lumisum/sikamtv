@@ -67,6 +67,14 @@ enum BackgroundTransition: String, CaseIterable, Identifiable, Codable, Sendable
     var id: String { rawValue }
 }
 
+enum BackgroundMotionStyle: String, CaseIterable, Identifiable, Codable, Sendable {
+    case natural = "自然"
+    case immersive = "沉浸"
+    case liquid = "液态"
+    case off = "关闭"
+    var id: String { rawValue }
+}
+
 struct BackgroundTimelineState: Equatable, Sendable {
     let currentIndex: Int
     let nextIndex: Int?
@@ -333,6 +341,13 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var saturation: Double = 1.16
     var backgroundTransition: BackgroundTransition = .crossfade
     var backgroundTransitionDuration: Double = 1.35
+    var backgroundMotionStyle: BackgroundMotionStyle = .immersive
+    var backgroundLife: Double = 0.82
+    var backgroundCameraMotion: Double = 0.62
+    var backgroundAudioWarp: Double = 0.58
+    var backgroundParallax: Double = 0.52
+    var backgroundLightFlow: Double = 0.68
+    var backgroundSubjectProtection: Double = 0.72
 
     var visualizerStrength: Double = 0.86
     var visualizerPositionY: Double = 0.31
@@ -363,7 +378,8 @@ struct RenderSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case aspectRatio, template, visualizer, blur, darkness, saturation
-        case backgroundTransition, backgroundTransitionDuration
+        case backgroundTransition, backgroundTransitionDuration, backgroundMotionStyle
+        case backgroundLife, backgroundCameraMotion, backgroundAudioWarp, backgroundParallax, backgroundLightFlow, backgroundSubjectProtection
         case visualizerStrength, visualizerPositionY, visualizerScale, visualizerGlow, visualizerSmoothing, visualizerDensity
         case visualizerBrilliance, visualizerIntegration, visualizerTrail, visualizerColorRichness, visualizerDepth, visualizerBeatImpact, musicAwareness
         case lyricSize, lyricPositionY, lyricWidth, lyricLineSpacing, lyricInactiveOpacity, lyricGlow, lyricAnimationDuration
@@ -381,6 +397,13 @@ struct RenderSettings: Codable, Equatable, Sendable {
         saturation = try container.decodeIfPresent(Double.self, forKey: .saturation) ?? defaults.saturation
         backgroundTransition = try container.decodeIfPresent(BackgroundTransition.self, forKey: .backgroundTransition) ?? defaults.backgroundTransition
         backgroundTransitionDuration = try container.decodeIfPresent(Double.self, forKey: .backgroundTransitionDuration) ?? defaults.backgroundTransitionDuration
+        backgroundMotionStyle = try container.decodeIfPresent(BackgroundMotionStyle.self, forKey: .backgroundMotionStyle) ?? defaults.backgroundMotionStyle
+        backgroundLife = try container.decodeIfPresent(Double.self, forKey: .backgroundLife) ?? defaults.backgroundLife
+        backgroundCameraMotion = try container.decodeIfPresent(Double.self, forKey: .backgroundCameraMotion) ?? defaults.backgroundCameraMotion
+        backgroundAudioWarp = try container.decodeIfPresent(Double.self, forKey: .backgroundAudioWarp) ?? defaults.backgroundAudioWarp
+        backgroundParallax = try container.decodeIfPresent(Double.self, forKey: .backgroundParallax) ?? defaults.backgroundParallax
+        backgroundLightFlow = try container.decodeIfPresent(Double.self, forKey: .backgroundLightFlow) ?? defaults.backgroundLightFlow
+        backgroundSubjectProtection = try container.decodeIfPresent(Double.self, forKey: .backgroundSubjectProtection) ?? defaults.backgroundSubjectProtection
         visualizerStrength = try container.decodeIfPresent(Double.self, forKey: .visualizerStrength) ?? defaults.visualizerStrength
         visualizerPositionY = try container.decodeIfPresent(Double.self, forKey: .visualizerPositionY) ?? defaults.visualizerPositionY
         visualizerScale = try container.decodeIfPresent(Double.self, forKey: .visualizerScale) ?? defaults.visualizerScale
@@ -416,6 +439,13 @@ struct RenderSettings: Codable, Equatable, Sendable {
         try container.encode(saturation, forKey: .saturation)
         try container.encode(backgroundTransition, forKey: .backgroundTransition)
         try container.encode(backgroundTransitionDuration, forKey: .backgroundTransitionDuration)
+        try container.encode(backgroundMotionStyle, forKey: .backgroundMotionStyle)
+        try container.encode(backgroundLife, forKey: .backgroundLife)
+        try container.encode(backgroundCameraMotion, forKey: .backgroundCameraMotion)
+        try container.encode(backgroundAudioWarp, forKey: .backgroundAudioWarp)
+        try container.encode(backgroundParallax, forKey: .backgroundParallax)
+        try container.encode(backgroundLightFlow, forKey: .backgroundLightFlow)
+        try container.encode(backgroundSubjectProtection, forKey: .backgroundSubjectProtection)
         try container.encode(visualizerStrength, forKey: .visualizerStrength)
         try container.encode(visualizerPositionY, forKey: .visualizerPositionY)
         try container.encode(visualizerScale, forKey: .visualizerScale)

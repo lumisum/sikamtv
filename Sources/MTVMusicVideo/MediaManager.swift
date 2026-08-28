@@ -38,6 +38,7 @@ final class MediaManager {
         let loadedDuration = isVideo ? AVAssetMetadata.duration(of: asset)?.seconds ?? 0 : 0
         let duration = loadedDuration.isFinite ? loadedDuration : 0
         let hasAudio = isVideo && !AVAssetMetadata.tracks(in: asset, mediaType: .audio).isEmpty
+        if !isVideo { VisionSubjectMaskCache.shared.prewarm(url: url) }
         return BackgroundMedia(url: url, kind: isVideo ? .video : .image, duration: duration, hasAudio: hasAudio)
     }
 

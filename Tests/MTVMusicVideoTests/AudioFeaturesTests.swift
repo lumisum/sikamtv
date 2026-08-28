@@ -35,6 +35,8 @@ final class AudioFeaturesTests: XCTestCase {
         settings.visualizerIntegration = 0.67
         settings.visualizerTrail = 0.41
         settings.musicAwareness = 0.73
+        settings.backgroundMotionStyle = .liquid
+        settings.backgroundLife = 0.77
         let data = try JSONEncoder().encode(settings)
         XCTAssertEqual(try JSONDecoder().decode(RenderSettings.self, from: data), settings)
     }
@@ -47,6 +49,8 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.visualizerIntegration, RenderSettings().visualizerIntegration)
         XCTAssertEqual(settings.visualizerTrail, RenderSettings().visualizerTrail)
         XCTAssertEqual(settings.musicAwareness, RenderSettings().musicAwareness)
+        XCTAssertEqual(settings.backgroundMotionStyle, RenderSettings().backgroundMotionStyle)
+        XCTAssertEqual(settings.backgroundLife, RenderSettings().backgroundLife)
     }
 
     func testAnalyzerStreamsAudioAndDetectsTransientFeatures() throws {
@@ -57,7 +61,7 @@ final class AudioFeaturesTests: XCTestCase {
         let sampleRate = 44_100.0
         let frameCount = Int(sampleRate * 3)
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let file = try AVAudioFile(forWriting: url, settings: interleavedFileSettings(format))
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount))!
         buffer.frameLength = AVAudioFrameCount(frameCount)
         let samples = buffer.floatChannelData![0]
@@ -92,7 +96,7 @@ final class AudioFeaturesTests: XCTestCase {
         let duration = 8.0
         let frameCount = Int(sampleRate * duration)
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let file = try AVAudioFile(forWriting: url, settings: interleavedFileSettings(format))
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount))!
         buffer.frameLength = AVAudioFrameCount(frameCount)
         let samples = buffer.floatChannelData![0]
@@ -164,7 +168,7 @@ final class AudioFeaturesTests: XCTestCase {
         let sampleRate = 44_100.0
         let count = Int(sampleRate * duration)
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let file = try AVAudioFile(forWriting: url, settings: interleavedFileSettings(format))
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count))!
         buffer.frameLength = AVAudioFrameCount(count)
         for channel in 0..<2 {
@@ -174,5 +178,11 @@ final class AudioFeaturesTests: XCTestCase {
             }
         }
         try file.write(from: buffer)
+    }
+
+    private func interleavedFileSettings(_ format: AVAudioFormat) -> [String: Any] {
+        var settings = format.settings
+        settings[AVLinearPCMIsNonInterleaved] = false
+        return settings
     }
 }

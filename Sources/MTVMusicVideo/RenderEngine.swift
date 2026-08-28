@@ -49,6 +49,7 @@ final class RenderEngine {
     private let metal: MetalRenderer
     private let visualizerEngine = VisualizerEngine()
     private var backgroundCache: [BackgroundCacheKey: MTLTexture] = [:]
+    private var subjectMaskTextures: [String: MTLTexture] = [:]
     private var lyricLuminanceCache: [LyricLuminanceCacheKey: LyricLuminanceSample] = [:]
     private let blurFilter = CIFilter(name: "CIGaussianBlur")
     private let colorFilter = CIFilter(name: "CIColorControls")
@@ -137,6 +138,7 @@ final class RenderEngine {
             accentWash: prepared.accentWash,
             mesh: prepared.mesh,
             lyrics: prepared.lyrics,
+            backgroundMotion: prepared.backgroundMotion,
             postProcess: prepared.postProcess
         )
     }
@@ -182,6 +184,7 @@ final class RenderEngine {
             accentWash: prepared.accentWash,
             mesh: prepared.mesh,
             lyrics: prepared.lyrics,
+            backgroundMotion: prepared.backgroundMotion,
             postProcess: prepared.postProcess
         )
     }
@@ -194,6 +197,7 @@ final class RenderEngine {
         let accentWash: SIMD4<Float>
         let mesh: VisualizerMesh
         let lyrics: MetalRenderer.TextureLayer?
+        let backgroundMotion: BackgroundMotionSettings
         let postProcess: PostProcessSettings
     }
 
@@ -291,6 +295,19 @@ final class RenderEngine {
             sectionProgress: directedFeatures.sectionProgress,
             musicAwareness: Float(settings.musicAwareness)
         )
+        let backgroundMotion = BackgroundMotionSettings(
+            time: time,
+            center: SIMD2(0.5, Float(min(0.92, max(0.08, settings.visualizerPositionY)))),
+            features: directedFeatures,
+            style: settings.backgroundMotionStyle,
+            life: Float(settings.backgroundLife),
+            camera: Float(settings.backgroundCameraMotion),
+            warp: Float(settings.backgroundAudioWarp),
+            parallax: Float(settings.backgroundParallax),
+            lightFlow: Float(settings.backgroundLightFlow),
+            subjectProtection: Float(settings.backgroundSubjectProtection),
+            awareness: Float(settings.musicAwareness)
+        )
         return PreparedFrame(
             backgrounds: layers,
             placeholder: placeholder,
@@ -299,6 +316,7 @@ final class RenderEngine {
             accentWash: SIMD4(Float(accent.0), Float(accent.1), Float(accent.2), washAlpha),
             mesh: mesh,
             lyrics: lyricsLayer,
+            backgroundMotion: backgroundMotion,
             postProcess: postProcess
         )
     }
@@ -318,19 +336,33 @@ final class RenderEngine {
     ) {
         guard let texture = filteredBackground(image, identifier: identifier, mediaDuration: mediaDuration, targetSize: size, settings: settings) else { return }
         let isStatic = mediaDuration <= 0
-        let zoomProgress = isStatic ? min(1, max(0, localTime / max(0.001, segmentDuration))) : 0
-        let breathingZoom = isStatic ? 0.012 * (0.5 + 0.5 * sin(localTime * 0.16)) : 0
-        let baseZoom = isStatic ? 1.018 + 0.052 * zoomProgress + breathingZoom : 1
+        let motionEnabled = isStatic && settings.backgroundMotionStyle != .off
+        let zoomProgress = motionEnabled ? min(1, max(0, localTime / max(0.001, segmentDuration))) : 0
+        let breathingZoom = motionEnabled ? 0.004 * (0.5 + 0.5 * sin(localTime * 0.16)) : 0
+        let baseZoom = motionEnabled ? 1.014 + 0.026 * zoomProgress + breathingZoom : 1
         let zoom = CGFloat(baseZoom) * extraZoom
         let container = CGRect(x: offsetX, y: 0, width: size.width, height: size.height)
         var imageRect = aspectFillRect(imageSize: CGSize(width: texture.width, height: texture.height), in: container, zoom: zoom)
-        if isStatic {
-            let availableX = max(0, (imageRect.width - container.width) * 0.38)
-            let availableY = max(0, (imageRect.height - container.height) * 0.38)
+        if motionEnabled {
+            let availableX = max(0, (imageRect.width - container.width) * 0.24)
+            let availableY = max(0, (imageRect.height - container.height) * 0.24)
             imageRect.origin.x += sin(localTime * 0.055) * availableX
             imageRect.origin.y += cos(localTime * 0.043) * availableY
         }
-        layers.append(MetalRenderer.TextureLayer(texture: texture, rect: imageRect, alpha: Float(alpha)))
+        let reactivity: Float = settings.backgroundMotionStyle == .off ? 0 : (isStatic ? 1 : 0.16)
+        let subjectMask = isStatic ? subjectMaskTexture(for: image, identifier: identifier) : nil
+        layers.append(MetalRenderer.TextureLayer(texture: texture, rect: imageRect, alpha: Float(alpha), backgroundReactivity: reactivity, subjectMask: subjectMask))
+    }
+
+    private func subjectMaskTexture(for image: CGImage, identifier: String?) -> MTLTexture? {
+        guard let identifier else { return nil }
+        if let cached = subjectMaskTextures[identifier] { return cached }
+        guard let mask = VisionSubjectMaskCache.shared.mask(for: identifier, image: image),
+              let texture = metal.makeTexture(width: mask.width, height: mask.height) else { return nil }
+        metal.renderCIImage(CIImage(cgImage: mask), to: texture)
+        if subjectMaskTextures.count > 32 { subjectMaskTextures.removeAll(keepingCapacity: true) }
+        subjectMaskTextures[identifier] = texture
+        return texture
     }
 
     private func filteredBackground(_ image: CGImage, identifier: String?, mediaDuration: Double, targetSize: CGSize, settings: RenderSettings) -> MTLTexture? {

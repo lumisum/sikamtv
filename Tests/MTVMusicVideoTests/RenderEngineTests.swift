@@ -15,6 +15,8 @@ final class RenderEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(settings.visualizerBrilliance, 0.80)
         XCTAssertGreaterThanOrEqual(settings.visualizerIntegration, 0.70)
         XCTAssertGreaterThanOrEqual(settings.visualizerColorRichness, 0.80)
+        XCTAssertEqual(settings.backgroundMotionStyle, .immersive)
+        XCTAssertGreaterThanOrEqual(settings.backgroundLife, 0.80)
         XCTAssertGreaterThanOrEqual(settings.lyricGlow, 0.80)
         XCTAssertEqual(settings.lyricAnimation, .bloom)
         XCTAssertGreaterThanOrEqual(settings.backgroundTransitionDuration, 1.0)
@@ -51,6 +53,50 @@ final class RenderEngineTests: XCTestCase {
         ))
         let difference = maximumColorDifference(first, later, yStartRatio: 0.02, yEndRatio: 0.98)
         XCTAssertGreaterThan(difference, 0.025, "A still photo should receive visible slow motion and breathing light")
+    }
+
+    func testStaticBackgroundLifeMakesThePhotoReactToMusic() throws {
+        let background = try XCTUnwrap(makeBandedBackground(width: 640, height: 360))
+        let frameCount = 90
+        let analysis = AudioAnalysis(
+            duration: 3,
+            sampleRate: 44_100,
+            amplitudes: Array(repeating: 0.7, count: frameCount),
+            loudness: Array(repeating: 0.72, count: frameCount),
+            bass: Array(repeating: 0.84, count: frameCount),
+            mid: Array(repeating: 0.62, count: frameCount),
+            high: Array(repeating: 0.48, count: frameCount),
+            beats: Array(repeating: 0.9, count: frameCount),
+            spectrum: Array(repeating: Array(repeating: Float(0.6), count: 96), count: frameCount),
+            energy: Array(repeating: 0.9, count: frameCount),
+            transients: Array(repeating: 0.95, count: frameCount),
+            buildups: Array(repeating: 0.7, count: frameCount),
+            climaxes: Array(repeating: 0.86, count: frameCount),
+            quietness: Array(repeating: 0.02, count: frameCount),
+            warmth: Array(repeating: 0.7, count: frameCount),
+            sectionProgress: Array(repeating: 0.55, count: frameCount)
+        )
+        let engine = RenderEngine()
+        var still = RenderSettings()
+        still.aspectRatio = .landscape
+        still.blur = 0
+        still.darkness = 0
+        still.saturation = 1
+        still.visualizerStrength = 0
+        still.visualizerGlow = 0
+        still.backgroundMotionStyle = .off
+        var alive = still
+        alive.backgroundMotionStyle = .liquid
+        alive.backgroundLife = 1
+        alive.backgroundAudioWarp = 1
+        alive.backgroundParallax = 1
+        alive.backgroundLightFlow = 1
+        alive.backgroundSubjectProtection = 0.5
+        let size = CGSize(width: 320, height: 180)
+
+        let baseline = try XCTUnwrap(engine.render(size: size, time: 1.1, settings: still, background: background, backgroundDuration: 0, backgroundIdentifier: "life-photo", lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        let reactive = try XCTUnwrap(engine.render(size: size, time: 1.1, settings: alive, background: background, backgroundDuration: 0, backgroundIdentifier: "life-photo", lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        XCTAssertGreaterThan(sparseAverageColorDifference(baseline, reactive), 0.006, "Music should visibly animate a static background")
     }
 
     func testEveryVisualizerRendersAtTheRequestedAspectRatio() {

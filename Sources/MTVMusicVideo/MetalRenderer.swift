@@ -9,6 +9,16 @@ final class MetalRenderer {
         let texture: MTLTexture
         let rect: CGRect
         let alpha: Float
+        let backgroundReactivity: Float
+        let subjectMask: MTLTexture?
+
+        init(texture: MTLTexture, rect: CGRect, alpha: Float, backgroundReactivity: Float = 0, subjectMask: MTLTexture? = nil) {
+            self.texture = texture
+            self.rect = rect
+            self.alpha = alpha
+            self.backgroundReactivity = backgroundReactivity
+            self.subjectMask = subjectMask
+        }
     }
 
     let device: MTLDevice
@@ -18,6 +28,7 @@ final class MetalRenderer {
     private let additiveColorPipeline: MTLRenderPipelineState
     private let radialPipeline: MTLRenderPipelineState
     private let texturePipeline: MTLRenderPipelineState
+    private let backgroundPipeline: MTLRenderPipelineState
     private let vignettePipeline: MTLRenderPipelineState
     private let postPipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
@@ -79,12 +90,14 @@ final class MetalRenderer {
               let additiveColorPipeline = pipeline("fragment_color", blend: additive),
               let radialPipeline = pipeline("fragment_radial", blend: additive),
               let texturePipeline = pipeline("fragment_texture", blend: alpha),
+              let backgroundPipeline = pipeline("fragment_background", blend: alpha),
               let vignettePipeline = pipeline("fragment_vignette", blend: alpha),
               let postPipeline = pipeline("fragment_post", blend: replace) else { return nil }
         self.colorPipeline = colorPipeline
         self.additiveColorPipeline = additiveColorPipeline
         self.radialPipeline = radialPipeline
         self.texturePipeline = texturePipeline
+        self.backgroundPipeline = backgroundPipeline
         self.vignettePipeline = vignettePipeline
         self.postPipeline = postPipeline
 
@@ -122,6 +135,7 @@ final class MetalRenderer {
         accentWash: SIMD4<Float>,
         mesh: VisualizerMesh,
         lyrics: TextureLayer?,
+        backgroundMotion: BackgroundMotionSettings,
         postProcess: PostProcessSettings
     ) {
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
@@ -165,7 +179,7 @@ final class MetalRenderer {
             draw(placeholder, pipeline: colorPipeline, encoder: encoder)
         }
         for layer in backgrounds {
-            drawTexturedQuad(layer, encoder: encoder)
+            drawTexturedQuad(layer, encoder: encoder, backgroundMotion: backgroundMotion, size: size)
         }
         if darkness > 0.001 {
             let color = SIMD4<Float>(0, 0, 0, darkness)
@@ -257,7 +271,7 @@ final class MetalRenderer {
         lastPostTime = postProcess.time
     }
 
-    func renderToPixelBuffer(_ pixelBuffer: CVPixelBuffer, size: CGSize, backgrounds: [TextureLayer], placeholder: [GPUVertex], darkness: Float, vignetteAlpha: Float, accentWash: SIMD4<Float>, mesh: VisualizerMesh, lyrics: TextureLayer?, postProcess: PostProcessSettings) -> Bool {
+    func renderToPixelBuffer(_ pixelBuffer: CVPixelBuffer, size: CGSize, backgrounds: [TextureLayer], placeholder: [GPUVertex], darkness: Float, vignetteAlpha: Float, accentWash: SIMD4<Float>, mesh: VisualizerMesh, lyrics: TextureLayer?, backgroundMotion: BackgroundMotionSettings, postProcess: PostProcessSettings) -> Bool {
         guard let texture = makeTextureFromPixelBuffer(pixelBuffer) else { return false }
         render(
             to: texture,
@@ -269,6 +283,7 @@ final class MetalRenderer {
             accentWash: accentWash,
             mesh: mesh,
             lyrics: lyrics,
+            backgroundMotion: backgroundMotion,
             postProcess: postProcess
         )
         retainedCVTexture = nil
@@ -342,7 +357,7 @@ final class MetalRenderer {
         ], pipeline: pipeline, encoder: encoder)
     }
 
-    private func drawTexturedQuad(_ layer: TextureLayer, encoder: MTLRenderCommandEncoder) {
+    private func drawTexturedQuad(_ layer: TextureLayer, encoder: MTLRenderCommandEncoder, backgroundMotion: BackgroundMotionSettings? = nil, size: CGSize = .zero) {
         let rect = layer.rect
         let color = SIMD4<Float>(1, 1, 1, layer.alpha)
         let vertices = [
@@ -353,10 +368,17 @@ final class MetalRenderer {
             GPUVertex(position: SIMD2(Float(rect.maxX), Float(rect.maxY)), uv: SIMD2(1, 1), color: color),
             GPUVertex(position: SIMD2(Float(rect.minX), Float(rect.maxY)), uv: SIMD2(0, 1), color: color)
         ]
-        encoder.setRenderPipelineState(texturePipeline)
+        let useBackgroundMotion = layer.backgroundReactivity > 0.001 && backgroundMotion != nil
+        let pipeline = useBackgroundMotion ? backgroundPipeline : texturePipeline
+        encoder.setRenderPipelineState(pipeline)
+        if let backgroundMotion, useBackgroundMotion {
+            var motionUniforms = backgroundMotion.uniforms(size: size, reactivity: layer.backgroundReactivity, hasVisionMask: layer.subjectMask != nil)
+            encoder.setFragmentBytes(&motionUniforms, length: MemoryLayout<GPUBackgroundUniforms>.stride, index: 0)
+            encoder.setFragmentTexture(layer.subjectMask ?? layer.texture, index: 1)
+        }
         encoder.setFragmentTexture(layer.texture, index: 0)
         encoder.setFragmentSamplerState(sampler, index: 0)
-        draw(vertices, pipeline: texturePipeline, encoder: encoder, setPipeline: false)
+        draw(vertices, pipeline: pipeline, encoder: encoder, setPipeline: false)
     }
 
     private func draw(_ vertices: [GPUVertex], pipeline: MTLRenderPipelineState, encoder: MTLRenderCommandEncoder, setPipeline: Bool = true) {

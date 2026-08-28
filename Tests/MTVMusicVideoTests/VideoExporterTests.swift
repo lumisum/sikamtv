@@ -306,7 +306,9 @@ final class VideoExporterTests: XCTestCase {
         let sampleRate = 44_100.0
         let count = Int(sampleRate * duration)
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        var settings = format.settings
+        settings[AVLinearPCMIsNonInterleaved] = false
+        let file = try AVAudioFile(forWriting: url, settings: settings)
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count))!
         buffer.frameLength = AVAudioFrameCount(count)
         for channel in 0..<2 {

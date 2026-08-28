@@ -698,7 +698,20 @@ struct SettingsPanel: View {
                 SliderRow(title: "背景模糊", value: $workspace.settings.blur, range: 0...40, suffix: " px")
                 SliderRow(title: "背景暗化", value: $workspace.settings.darkness, range: 0...0.8, displayMultiplier: 100, suffix: "%")
                 SliderRow(title: "饱和度", value: $workspace.settings.saturation, range: 0...1.6, displayMultiplier: 100, suffix: "%")
-                Text("静态图片会自动加入缓慢运镜、色彩呼吸和音乐响应环境光。")
+                Picker("背景生命模式", selection: $workspace.settings.backgroundMotionStyle) {
+                    ForEach(BackgroundMotionStyle.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Group {
+                    SliderRow(title: "背景生命力", value: $workspace.settings.backgroundLife, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "镜头呼吸", value: $workspace.settings.backgroundCameraMotion, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "音频形变", value: $workspace.settings.backgroundAudioWarp, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "空间视差", value: $workspace.settings.backgroundParallax, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "光流强度", value: $workspace.settings.backgroundLightFlow, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "智能主体保护", value: $workspace.settings.backgroundSubjectProtection, range: 0...1, displayMultiplier: 100, suffix: "%")
+                }
+                .disabled(workspace.settings.backgroundMotionStyle == .off)
+                Text("Vision 会在本机识别人脸和显著主体并缓存保护遮罩；静态图片随音乐产生 2.5D 运镜、局部涟漪与光流。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

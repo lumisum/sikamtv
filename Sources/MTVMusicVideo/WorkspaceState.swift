@@ -311,6 +311,7 @@ final class WorkspaceState: ObservableObject {
         case .zen:
             updated.blur = 22; updated.darkness = 0.30; updated.saturation = 1.08; updated.lyricSize = 44
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.20
+            updated.backgroundMotionStyle = .natural; updated.backgroundLife = 0.72; updated.backgroundCameraMotion = 0.54; updated.backgroundAudioWarp = 0.42; updated.backgroundParallax = 0.46; updated.backgroundLightFlow = 0.55; updated.backgroundSubjectProtection = 0.82
             updated.visualizerStrength = 0.74; updated.visualizerPositionY = 0.30
             updated.visualizerScale = 1.05; updated.visualizerGlow = 0.88; updated.visualizerSmoothing = 0.78; updated.visualizerDensity = 0.58
             updated.visualizerBrilliance = 0.68; updated.visualizerIntegration = 0.84; updated.visualizerTrail = 0.24
@@ -320,6 +321,7 @@ final class WorkspaceState: ObservableObject {
         case .ethereal:
             updated.blur = 18; updated.darkness = 0.34; updated.saturation = 1.16; updated.lyricSize = 42
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.35
+            updated.backgroundMotionStyle = .immersive; updated.backgroundLife = 0.86; updated.backgroundCameraMotion = 0.64; updated.backgroundAudioWarp = 0.62; updated.backgroundParallax = 0.58; updated.backgroundLightFlow = 0.78; updated.backgroundSubjectProtection = 0.70
             updated.visualizerStrength = 0.86; updated.visualizerPositionY = 0.31
             updated.visualizerScale = 1.08; updated.visualizerGlow = 0.96; updated.visualizerSmoothing = 0.72; updated.visualizerDensity = 0.86
             updated.visualizerBrilliance = 0.88; updated.visualizerIntegration = 0.78; updated.visualizerTrail = 0.42
@@ -329,6 +331,7 @@ final class WorkspaceState: ObservableObject {
         case .minimal:
             updated.blur = 4; updated.darkness = 0.28; updated.saturation = 0.92; updated.lyricSize = 38
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 0.65
+            updated.backgroundMotionStyle = .natural; updated.backgroundLife = 0.38; updated.backgroundCameraMotion = 0.35; updated.backgroundAudioWarp = 0.20; updated.backgroundParallax = 0.28; updated.backgroundLightFlow = 0.22; updated.backgroundSubjectProtection = 0.88
             updated.visualizerStrength = 0.56; updated.visualizerPositionY = 0.22
             updated.visualizerScale = 0.92; updated.visualizerGlow = 0.32; updated.visualizerSmoothing = 0.82; updated.visualizerDensity = 0.42
             updated.visualizerBrilliance = 0.38; updated.visualizerIntegration = 0.88; updated.visualizerTrail = 0.12
@@ -338,6 +341,7 @@ final class WorkspaceState: ObservableObject {
         case .cinema:
             updated.blur = 26; updated.darkness = 0.46; updated.saturation = 1.05; updated.lyricSize = 50
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.40
+            updated.backgroundMotionStyle = .immersive; updated.backgroundLife = 0.74; updated.backgroundCameraMotion = 0.72; updated.backgroundAudioWarp = 0.38; updated.backgroundParallax = 0.70; updated.backgroundLightFlow = 0.48; updated.backgroundSubjectProtection = 0.78
             updated.visualizerStrength = 0.62; updated.visualizerPositionY = 0.27
             updated.visualizerScale = 1.12; updated.visualizerGlow = 0.82; updated.visualizerSmoothing = 0.75; updated.visualizerDensity = 0.48
             updated.visualizerBrilliance = 0.70; updated.visualizerIntegration = 0.82; updated.visualizerTrail = 0.30
@@ -347,6 +351,7 @@ final class WorkspaceState: ObservableObject {
         case .electronic:
             updated.blur = 8; updated.darkness = 0.24; updated.saturation = 1.22; updated.lyricSize = 40
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 0.55
+            updated.backgroundMotionStyle = .liquid; updated.backgroundLife = 0.92; updated.backgroundCameraMotion = 0.58; updated.backgroundAudioWarp = 0.88; updated.backgroundParallax = 0.56; updated.backgroundLightFlow = 0.90; updated.backgroundSubjectProtection = 0.58
             updated.visualizerStrength = 1; updated.visualizerPositionY = 0.22
             updated.visualizerScale = 1.02; updated.visualizerGlow = 0.95; updated.visualizerSmoothing = 0.42; updated.visualizerDensity = 0.82
             updated.visualizerBrilliance = 1.0; updated.visualizerIntegration = 0.58; updated.visualizerTrail = 0.36

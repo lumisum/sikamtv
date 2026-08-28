@@ -31,6 +31,16 @@ enum MetalShaders {
         float4 character; // transient, warmth, section progress, awareness
     };
 
+    struct BackgroundUniforms {
+        float4 viewport;  // width, height, visual center x/y
+        float4 audio;     // bass, mid, high, transient
+        float4 structure; // energy, buildup, climax, quietness
+        float4 controls;  // life, camera, warp, parallax
+        float4 mode;      // light flow, subject protection, style, reactivity
+        float4 clock;     // time, section progress, warmth, awareness
+        float4 mask;      // Vision mask availability
+    };
+
     vertex VertexOut vertex_main(VertexIn in [[stage_in]], constant Uniforms &uniforms [[buffer(1)]]) {
         VertexOut out;
         // Input geometry uses Core Graphics coordinates: origin bottom-left,
@@ -60,6 +70,89 @@ enum MetalShaders {
                                      sampler samp [[sampler(0)]]) {
         float4 sampled = tex.sample(samp, in.uv);
         return float4(sampled.rgb * in.color.a, sampled.a * in.color.a);
+    }
+
+    float luminance(float3 color);
+
+    fragment float4 fragment_background(VertexOut in [[stage_in]],
+                                         texture2d<float> tex [[texture(0)]],
+                                         texture2d<float> subjectMaskTexture [[texture(1)]],
+                                         sampler samp [[sampler(0)]],
+                                         constant BackgroundUniforms &motion [[buffer(0)]]) {
+        float2 uv = in.uv;
+        float2 center = float2(0.5);
+        float aspect = motion.viewport.x / max(motion.viewport.y, 1.0);
+        float bass = motion.audio.x;
+        float mid = motion.audio.y;
+        float high = motion.audio.z;
+        float transient = motion.audio.w;
+        float energy = motion.structure.x;
+        float buildup = motion.structure.y;
+        float climax = motion.structure.z;
+        float quietness = motion.structure.w;
+        float life = motion.controls.x * motion.mode.w;
+        float camera = motion.controls.y;
+        float warp = motion.controls.z;
+        float parallax = motion.controls.w;
+        float lightFlow = motion.mode.x;
+        float protection = motion.mode.y;
+        float style = motion.mode.z;
+        float time = motion.clock.x;
+        float section = motion.clock.y;
+        float warmth = motion.clock.z;
+        float awareness = motion.clock.w;
+        float hasVisionMask = motion.mask.x;
+
+        // Stable camera breathing: low frequencies and the long-form energy arc
+        // influence scale and drift without tying position directly to loudness.
+        float styleCamera = style < 0.5 ? 0.62 : (style < 1.5 ? 1.0 : 0.78);
+        float musicalPace = 0.65 + energy * 0.42 + buildup * 0.22;
+        float zoom = 1.0 + life * camera * styleCamera * (0.008 + energy * 0.008 + climax * 0.005)
+            + sin(time * (0.15 + musicalPace * 0.045)) * life * camera * 0.0025;
+        float2 drift = float2(
+            sin(time * 0.071 + section * 1.2),
+            cos(time * 0.057 - section * 0.9)
+        ) * life * camera * float2(0.0045, 0.0035) * (1.0 - quietness * 0.55);
+        uv = center + (uv - center) / zoom + drift;
+
+        float2 visualCenter = float2(motion.viewport.z, motion.viewport.w);
+        float2 delta = uv - visualCenter;
+        float2 metric = float2(delta.x * aspect, delta.y);
+        float radius = length(metric);
+        float centralProtection = exp(-dot(float2((uv.x - 0.5) * aspect, uv.y - 0.52), float2((uv.x - 0.5) * aspect, uv.y - 0.52)) * 7.5);
+        float visionProtection = subjectMaskTexture.sample(samp, clamp(uv, float2(0.002), float2(0.998))).r;
+        float protectedArea = mix(centralProtection, max(visionProtection, centralProtection * 0.18), hasVisionMask);
+        float motionMask = 1.0 - protection * protectedArea * 0.90;
+
+        // A luminance-derived pseudo-depth layer creates restrained 2.5D
+        // parallax from a single image without requiring an ML model.
+        float3 pilot = tex.sample(samp, clamp(uv, float2(0.002), float2(0.998))).rgb;
+        float pseudoDepth = (luminance(pilot) - 0.48) * 2.0;
+        float2 parallaxFlow = float2(sin(time * 0.063), cos(time * 0.051));
+        uv += parallaxFlow * pseudoDepth * life * parallax * motionMask * 0.0028;
+
+        float liquidBoost = style > 1.5 ? 1.65 : (style > 0.5 ? 1.0 : 0.52);
+        float wave = sin(radius * (18.0 + mid * 9.0) - time * (0.72 + energy * 0.58) + section * 2.0);
+        float2 direction = radius > 0.0001 ? metric / radius : float2(0.0);
+        direction.x /= max(aspect, 0.0001);
+        float impulse = bass * 0.48 + transient * 0.74 + climax * 0.25;
+        uv += direction * wave * exp(-radius * 2.8) * life * warp * liquidBoost * motionMask
+            * (0.0011 + impulse * 0.0022) * (1.0 - quietness * 0.48);
+        uv += float2(
+            sin((uv.y + time * 0.018) * 15.0 + mid * 2.5),
+            cos((uv.x - time * 0.014) * 13.0 + high * 3.0)
+        ) * life * warp * liquidBoost * motionMask * (0.00035 + buildup * 0.00045);
+        uv = clamp(uv, float2(0.002), float2(0.998));
+
+        float3 color = tex.sample(samp, uv).rgb;
+        float caustic = sin(uv.x * 18.0 + uv.y * 13.0 - time * (0.24 + mid * 0.20) + section * 2.4)
+            * sin(uv.y * 21.0 - uv.x * 7.0 + time * 0.17);
+        float light = caustic * life * lightFlow * motionMask * (0.012 + energy * 0.018 + climax * 0.015);
+        float3 lightTint = mix(float3(0.88, 0.96, 1.08), float3(1.08, 1.00, 0.86), warmth);
+        color += lightTint * max(0.0, light);
+        color *= 1.0 - max(0.0, -light) * 0.42;
+        color *= 1.0 + transient * life * awareness * 0.018 * motionMask;
+        return float4(clamp(color, 0.0, 1.0) * in.color.a, in.color.a);
     }
 
     fragment float4 fragment_vignette(VertexOut in [[stage_in]]) {
@@ -210,6 +303,50 @@ struct GPUPostUniforms {
     var mode: SIMD4<Float>
     var structure: SIMD4<Float>
     var character: SIMD4<Float>
+}
+
+struct GPUBackgroundUniforms {
+    var viewport: SIMD4<Float>
+    var audio: SIMD4<Float>
+    var structure: SIMD4<Float>
+    var controls: SIMD4<Float>
+    var mode: SIMD4<Float>
+    var clock: SIMD4<Float>
+    var mask: SIMD4<Float>
+}
+
+struct BackgroundMotionSettings {
+    let time: Double
+    let center: SIMD2<Float>
+    let features: AudioFrameFeatures
+    let style: BackgroundMotionStyle
+    let life: Float
+    let camera: Float
+    let warp: Float
+    let parallax: Float
+    let lightFlow: Float
+    let subjectProtection: Float
+    let awareness: Float
+
+    func uniforms(size: CGSize, reactivity: Float, hasVisionMask: Bool) -> GPUBackgroundUniforms {
+        let styleValue: Float
+        switch style {
+        case .natural: styleValue = 0
+        case .immersive: styleValue = 1
+        case .liquid: styleValue = 2
+        case .off: styleValue = 0
+        }
+        let enabledLife = style == .off ? 0 : life
+        return GPUBackgroundUniforms(
+            viewport: SIMD4(Float(size.width), Float(size.height), center.x, center.y),
+            audio: SIMD4(features.bass, features.mid, features.high, features.transient),
+            structure: SIMD4(features.energy, features.buildup, features.climax, features.quiet),
+            controls: SIMD4(enabledLife, camera, warp, parallax),
+            mode: SIMD4(lightFlow, subjectProtection, styleValue, reactivity),
+            clock: SIMD4(Float(time), features.sectionProgress, features.warmth, awareness),
+            mask: SIMD4(hasVisionMask ? 1 : 0, 0, 0, 0)
+        )
+    }
 }
 
 struct PostProcessSettings {
