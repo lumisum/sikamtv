@@ -35,8 +35,9 @@ final class MediaManager {
         let isVideo = ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
         guard isVideo || supportedImages.contains(url.pathExtension.lowercased()) else { return nil }
         let asset = AVAsset(url: url)
-        let duration = isVideo ? (asset.duration.seconds.isFinite ? asset.duration.seconds : 0) : 0
-        let hasAudio = isVideo && !asset.tracks(withMediaType: .audio).isEmpty
+        let loadedDuration = isVideo ? AVAssetMetadata.duration(of: asset)?.seconds ?? 0 : 0
+        let duration = loadedDuration.isFinite ? loadedDuration : 0
+        let hasAudio = isVideo && !AVAssetMetadata.tracks(in: asset, mediaType: .audio).isEmpty
         return BackgroundMedia(url: url, kind: isVideo ? .video : .image, duration: duration, hasAudio: hasAudio)
     }
 

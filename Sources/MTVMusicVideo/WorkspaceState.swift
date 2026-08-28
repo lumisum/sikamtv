@@ -313,30 +313,45 @@ final class WorkspaceState: ObservableObject {
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.20
             updated.visualizerStrength = 0.74; updated.visualizerPositionY = 0.30
             updated.visualizerScale = 1.05; updated.visualizerGlow = 0.88; updated.visualizerSmoothing = 0.78; updated.visualizerDensity = 0.58
+            updated.visualizerBrilliance = 0.68; updated.visualizerIntegration = 0.84; updated.visualizerTrail = 0.24
+            updated.visualizerColorRichness = 0.56; updated.visualizerDepth = 0.52; updated.visualizerBeatImpact = 0.55
+            updated.musicAwareness = 0.94
             updated.lyricPositionY = 0.58; updated.lyricAnimation = .scroll; updated.lyricGlow = 0.66; updated.lyricInactiveOpacity = 0.25; updated.lyricAnimationDuration = 0.55
         case .ethereal:
             updated.blur = 18; updated.darkness = 0.34; updated.saturation = 1.16; updated.lyricSize = 42
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.35
             updated.visualizerStrength = 0.86; updated.visualizerPositionY = 0.31
             updated.visualizerScale = 1.08; updated.visualizerGlow = 0.96; updated.visualizerSmoothing = 0.72; updated.visualizerDensity = 0.86
+            updated.visualizerBrilliance = 0.88; updated.visualizerIntegration = 0.78; updated.visualizerTrail = 0.42
+            updated.visualizerColorRichness = 0.92; updated.visualizerDepth = 0.74; updated.visualizerBeatImpact = 0.76
+            updated.musicAwareness = 0.96
             updated.lyricPositionY = 0.60; updated.lyricAnimation = .bloom; updated.lyricGlow = 0.82; updated.lyricInactiveOpacity = 0.24; updated.lyricAnimationDuration = 0.52
         case .minimal:
             updated.blur = 4; updated.darkness = 0.28; updated.saturation = 0.92; updated.lyricSize = 38
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 0.65
             updated.visualizerStrength = 0.56; updated.visualizerPositionY = 0.22
             updated.visualizerScale = 0.92; updated.visualizerGlow = 0.32; updated.visualizerSmoothing = 0.82; updated.visualizerDensity = 0.42
+            updated.visualizerBrilliance = 0.38; updated.visualizerIntegration = 0.88; updated.visualizerTrail = 0.12
+            updated.visualizerColorRichness = 0.32; updated.visualizerDepth = 0.32; updated.visualizerBeatImpact = 0.40
+            updated.musicAwareness = 0.78
             updated.lyricPositionY = 0.56; updated.lyricAnimation = .fade; updated.lyricGlow = 0.28; updated.lyricInactiveOpacity = 0.34; updated.lyricAnimationDuration = 0.30
         case .cinema:
             updated.blur = 26; updated.darkness = 0.46; updated.saturation = 1.05; updated.lyricSize = 50
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 1.40
             updated.visualizerStrength = 0.62; updated.visualizerPositionY = 0.27
             updated.visualizerScale = 1.12; updated.visualizerGlow = 0.82; updated.visualizerSmoothing = 0.75; updated.visualizerDensity = 0.48
+            updated.visualizerBrilliance = 0.70; updated.visualizerIntegration = 0.82; updated.visualizerTrail = 0.30
+            updated.visualizerColorRichness = 0.64; updated.visualizerDepth = 0.72; updated.visualizerBeatImpact = 0.60
+            updated.musicAwareness = 0.92
             updated.lyricPositionY = 0.59; updated.lyricAnimation = .scroll; updated.lyricGlow = 0.74; updated.lyricInactiveOpacity = 0.20; updated.lyricAnimationDuration = 0.60
         case .electronic:
             updated.blur = 8; updated.darkness = 0.24; updated.saturation = 1.22; updated.lyricSize = 40
             updated.backgroundTransition = .crossfade; updated.backgroundTransitionDuration = 0.55
             updated.visualizerStrength = 1; updated.visualizerPositionY = 0.22
             updated.visualizerScale = 1.02; updated.visualizerGlow = 0.95; updated.visualizerSmoothing = 0.42; updated.visualizerDensity = 0.82
+            updated.visualizerBrilliance = 1.0; updated.visualizerIntegration = 0.58; updated.visualizerTrail = 0.36
+            updated.visualizerColorRichness = 1.0; updated.visualizerDepth = 0.68; updated.visualizerBeatImpact = 1.0
+            updated.musicAwareness = 1.0
             updated.lyricPositionY = 0.60; updated.lyricAnimation = .karaoke; updated.lyricGlow = 0.80; updated.lyricInactiveOpacity = 0.26; updated.lyricAnimationDuration = 0.28
         }
         settings = updated // One state transaction, one preview request.

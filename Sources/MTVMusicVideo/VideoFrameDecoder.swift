@@ -11,6 +11,7 @@ final class VideoFrameDecoder {
     private let asset: AVAsset
     private let track: AVAssetTrack
     private let duration: Double
+    private let preferredTransform: CGAffineTransform
     private let ciContext: CIContext
     private var reader: AVAssetReader?
     private var output: AVAssetReaderTrackOutput?
@@ -19,10 +20,12 @@ final class VideoFrameDecoder {
 
     init?(url: URL, ciContext: CIContext) {
         let asset = AVAsset(url: url)
-        guard let track = asset.tracks(withMediaType: .video).first else { return nil }
+        guard let track = AVAssetMetadata.tracks(in: asset, mediaType: .video).first else { return nil }
         self.asset = asset
         self.track = track
-        self.duration = asset.duration.seconds.isFinite ? asset.duration.seconds : 0
+        let loadedDuration = AVAssetMetadata.duration(of: asset)?.seconds ?? 0
+        self.duration = loadedDuration.isFinite ? loadedDuration : 0
+        self.preferredTransform = AVAssetMetadata.preferredTransform(of: track)
         self.ciContext = ciContext
     }
 
@@ -80,7 +83,7 @@ final class VideoFrameDecoder {
 
     private func makeImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
         let source = CIImage(cvPixelBuffer: pixelBuffer)
-        let transformed = source.transformed(by: track.preferredTransform)
+        let transformed = source.transformed(by: preferredTransform)
         let extent = transformed.extent.standardized
         let normalized = transformed.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
         return ciContext.createCGImage(normalized, from: normalized.extent)

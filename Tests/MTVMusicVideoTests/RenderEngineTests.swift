@@ -12,6 +12,9 @@ final class RenderEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(settings.saturation, 1.10)
         XCTAssertGreaterThanOrEqual(settings.visualizerGlow, 0.90)
         XCTAssertGreaterThanOrEqual(settings.visualizerDensity, 0.80)
+        XCTAssertGreaterThanOrEqual(settings.visualizerBrilliance, 0.80)
+        XCTAssertGreaterThanOrEqual(settings.visualizerIntegration, 0.70)
+        XCTAssertGreaterThanOrEqual(settings.visualizerColorRichness, 0.80)
         XCTAssertGreaterThanOrEqual(settings.lyricGlow, 0.80)
         XCTAssertEqual(settings.lyricAnimation, .bloom)
         XCTAssertGreaterThanOrEqual(settings.backgroundTransitionDuration, 1.0)
@@ -81,6 +84,82 @@ final class RenderEngineTests: XCTestCase {
                 XCTAssertGreaterThan(difference, 0.002, "\(rendered[first].0.rawValue) and \(rendered[second].0.rawValue) must remain visually distinct")
             }
         }
+    }
+
+    func testUnifiedPostProcessingProducesAVisibleButStableUpgrade() throws {
+        let background = try XCTUnwrap(makeBandedBackground(width: 640, height: 360))
+        let analysis = AudioAnalysis(
+            duration: 2,
+            sampleRate: 44_100,
+            amplitudes: Array(repeating: 0.58, count: 60),
+            loudness: Array(repeating: 0.64, count: 60),
+            bass: Array(repeating: 0.78, count: 60),
+            mid: Array(repeating: 0.56, count: 60),
+            high: Array(repeating: 0.48, count: 60),
+            beats: Array(repeating: 0.9, count: 60),
+            spectrum: Array(repeating: Array(repeating: Float(0.62), count: 96), count: 60),
+            waveform: Array(repeating: (0..<128).map { sin(Float($0) * 0.18) * 0.76 }, count: 60)
+        )
+        let engine = RenderEngine()
+        var plain = RenderSettings()
+        plain.aspectRatio = .landscape
+        plain.blur = 0
+        plain.visualizerBrilliance = 0
+        plain.visualizerIntegration = 0
+        plain.visualizerTrail = 0
+        plain.visualizerColorRichness = 0
+        plain.visualizerDepth = 0
+        plain.visualizerBeatImpact = 0
+
+        var enhanced = plain
+        enhanced.visualizerBrilliance = 1
+        enhanced.visualizerIntegration = 1
+        enhanced.visualizerTrail = 0.8
+        enhanced.visualizerColorRichness = 1
+        enhanced.visualizerDepth = 1
+        enhanced.visualizerBeatImpact = 1
+
+        let size = CGSize(width: 320, height: 180)
+        let baseline = try XCTUnwrap(engine.render(size: size, time: 0.8, settings: plain, background: background, backgroundDuration: 2, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        let first = try XCTUnwrap(engine.render(size: size, time: 0.8, settings: enhanced, background: background, backgroundDuration: 2, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        let repeated = try XCTUnwrap(engine.render(size: size, time: 0.8, settings: enhanced, background: background, backgroundDuration: 2, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+
+        XCTAssertGreaterThan(sparseAverageColorDifference(baseline, first), 0.008, "Unified post controls should visibly change the scene")
+        XCTAssertLessThan(sparseAverageColorDifference(first, repeated), 0.001, "Paused or repeated frames must not accumulate trails")
+    }
+
+    func testMusicAwarenessDirectsTheWholeSceneFromSongStructure() throws {
+        let background = try XCTUnwrap(makeBandedBackground(width: 640, height: 360))
+        let frameCount = 90
+        let analysis = AudioAnalysis(
+            duration: 3,
+            sampleRate: 44_100,
+            amplitudes: Array(repeating: 0.38, count: frameCount),
+            loudness: Array(repeating: 0.38, count: frameCount),
+            bass: Array(repeating: 0.48, count: frameCount),
+            mid: Array(repeating: 0.42, count: frameCount),
+            high: Array(repeating: 0.36, count: frameCount),
+            beats: Array(repeating: 0.2, count: frameCount),
+            spectrum: Array(repeating: Array(repeating: Float(0.42), count: 96), count: frameCount),
+            energy: Array(repeating: 0.92, count: frameCount),
+            transients: Array(repeating: 0.86, count: frameCount),
+            buildups: Array(repeating: 0.78, count: frameCount),
+            climaxes: Array(repeating: 0.94, count: frameCount),
+            quietness: Array(repeating: 0.02, count: frameCount),
+            warmth: Array(repeating: 0.88, count: frameCount),
+            sectionProgress: Array(repeating: 0.65, count: frameCount)
+        )
+        let engine = RenderEngine()
+        var unaware = RenderSettings()
+        unaware.aspectRatio = .landscape
+        unaware.musicAwareness = 0
+        var aware = unaware
+        aware.musicAwareness = 1
+        let size = CGSize(width: 320, height: 180)
+
+        let plain = try XCTUnwrap(engine.render(size: size, time: 1, settings: unaware, background: background, backgroundDuration: 3, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        let directed = try XCTUnwrap(engine.render(size: size, time: 1, settings: aware, background: background, backgroundDuration: 3, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        XCTAssertGreaterThan(sparseAverageColorDifference(plain, directed), 0.004, "Song structure should visibly direct motion, light, and color")
     }
 
     func testEveryLyricAnimationRendersWithParameterizedLayout() {

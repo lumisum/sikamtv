@@ -136,7 +136,8 @@ final class RenderEngine {
             vignetteAlpha: prepared.vignetteAlpha,
             accentWash: prepared.accentWash,
             mesh: prepared.mesh,
-            lyrics: prepared.lyrics
+            lyrics: prepared.lyrics,
+            postProcess: prepared.postProcess
         )
     }
 
@@ -180,7 +181,8 @@ final class RenderEngine {
             vignetteAlpha: prepared.vignetteAlpha,
             accentWash: prepared.accentWash,
             mesh: prepared.mesh,
-            lyrics: prepared.lyrics
+            lyrics: prepared.lyrics,
+            postProcess: prepared.postProcess
         )
     }
 
@@ -192,6 +194,7 @@ final class RenderEngine {
         let accentWash: SIMD4<Float>
         let mesh: VisualizerMesh
         let lyrics: MetalRenderer.TextureLayer?
+        let postProcess: PostProcessSettings
     }
 
     private func prepareFrame(
@@ -237,6 +240,7 @@ final class RenderEngine {
         }
 
         let features = analysis?.frame(at: time) ?? .silent
+        let directedFeatures = features.directed(amount: Float(settings.musicAwareness))
         let mesh = visualizerEngine.mesh(
             kind: settings.visualizer,
             size: size,
@@ -247,8 +251,9 @@ final class RenderEngine {
             staticBackground: background != nil && backgroundDuration <= 0
         )
         let accent = VisualPalette.rgba(settings.template.palette.accent)
-        let breath = 0.92 + sin(time * 0.27) * 0.08 + Double(features.loudness) * 0.08
-        let washAlpha = Float((settings.template == .minimal ? 0.025 : 0.055) * breath)
+        let musicalArc = Double(directedFeatures.energy) * 0.45 + Double(directedFeatures.buildup) * 0.22 + Double(directedFeatures.climax) * 0.33
+        let breath = 0.88 + sin(time * (0.20 + musicalArc * 0.10)) * 0.06 + Double(directedFeatures.loudness) * 0.06 + musicalArc * 0.12
+        let washAlpha = Float((settings.template == .minimal ? 0.022 : 0.048) * breath)
         let lyricsLayer: MetalRenderer.TextureLayer?
         if LRCParser.currentIndex(at: time, in: lyrics) != nil {
             let lyricContrast = makeLyricContrastProfile(
@@ -264,6 +269,28 @@ final class RenderEngine {
         } else {
             lyricsLayer = nil
         }
+        let postProcess = PostProcessSettings(
+            time: time,
+            center: SIMD2(0.5, Float(min(0.92, max(0.08, settings.visualizerPositionY)))),
+            bass: directedFeatures.bass,
+            mid: directedFeatures.mid,
+            high: directedFeatures.high,
+            beat: directedFeatures.beat,
+            integration: Float(settings.visualizerIntegration),
+            brilliance: Float(settings.visualizerBrilliance),
+            trail: Float(settings.visualizerTrail),
+            colorRichness: Float(settings.visualizerColorRichness),
+            depth: Float(settings.visualizerDepth),
+            beatImpact: Float(settings.visualizerBeatImpact),
+            energy: directedFeatures.energy,
+            transient: directedFeatures.transient,
+            buildup: directedFeatures.buildup,
+            climax: directedFeatures.climax,
+            quiet: directedFeatures.quiet,
+            warmth: directedFeatures.warmth,
+            sectionProgress: directedFeatures.sectionProgress,
+            musicAwareness: Float(settings.musicAwareness)
+        )
         return PreparedFrame(
             backgrounds: layers,
             placeholder: placeholder,
@@ -271,7 +298,8 @@ final class RenderEngine {
             vignetteAlpha: settings.template == .cinema ? 0.70 : 0.50,
             accentWash: SIMD4(Float(accent.0), Float(accent.1), Float(accent.2), washAlpha),
             mesh: mesh,
-            lyrics: lyricsLayer
+            lyrics: lyricsLayer,
+            postProcess: postProcess
         )
     }
 

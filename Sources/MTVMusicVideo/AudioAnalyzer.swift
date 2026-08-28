@@ -178,6 +178,13 @@ final class AudioAnalyzer {
             }
         }
         if pending.count > pendingHead { processFrame() }
+        let structure = makeMusicalStructure(
+            loudness: loudness,
+            bass: bassValues,
+            mid: midValues,
+            high: highValues,
+            beats: beatValues
+        )
         progress?(1)
 
         return AudioAnalysis(
@@ -191,8 +198,147 @@ final class AudioAnalyzer {
             high: highValues,
             beats: beatValues,
             spectrum: spectra,
-            waveform: waveforms
+            waveform: waveforms,
+            energy: structure.energy,
+            transients: structure.transients,
+            buildups: structure.buildups,
+            climaxes: structure.climaxes,
+            quietness: structure.quietness,
+            warmth: structure.warmth,
+            sectionProgress: structure.sectionProgress
         )
+    }
+
+    private struct MusicalStructure {
+        let energy: [Float]
+        let transients: [Float]
+        let buildups: [Float]
+        let climaxes: [Float]
+        let quietness: [Float]
+        let warmth: [Float]
+        let sectionProgress: [Float]
+    }
+
+    /// Looks across the complete song after the streaming FFT pass. These slow
+    /// envelopes provide musical context without adding work to preview frames.
+    private func makeMusicalStructure(
+        loudness: [Float],
+        bass: [Float],
+        mid: [Float],
+        high: [Float],
+        beats: [Float]
+    ) -> MusicalStructure {
+        let count = loudness.count
+        guard count > 0 else {
+            return MusicalStructure(energy: [], transients: [], buildups: [], climaxes: [], quietness: [], warmth: [], sectionProgress: [])
+        }
+        var rawEnergy = [Float](repeating: 0, count: count)
+        var warmth = [Float](repeating: 0.5, count: count)
+        for index in 0..<count {
+            let low = value(bass, index)
+            let middle = value(mid, index)
+            let treble = value(high, index)
+            rawEnergy[index] = value(loudness, index) * 0.42 + low * 0.28 + middle * 0.20 + treble * 0.10
+            warmth[index] = max(0, min(1, 0.5 + (low - treble) * 0.72))
+        }
+
+        let short = movingAverage(rawEnergy, radius: Int(frameRate * 0.32))
+        let phrase = movingAverage(rawEnergy, radius: Int(frameRate * 1.8))
+        let sorted = phrase.sorted()
+        let floor = sorted[min(sorted.count - 1, Int(Float(sorted.count - 1) * 0.08))]
+        let ceiling = sorted[min(sorted.count - 1, Int(Float(sorted.count - 1) * 0.92))]
+        let span = max(0.04, ceiling - floor)
+        let energy = phrase.map { smoothstep(($0 - floor) / span) }
+
+        var transients = [Float](repeating: 0, count: count)
+        var buildups = [Float](repeating: 0, count: count)
+        var climaxes = [Float](repeating: 0, count: count)
+        let look = max(1, Int(frameRate * 1.6))
+        let beatDensity = movingAverage(beats, radius: Int(frameRate * 0.7))
+        for index in 0..<count {
+            let previous = short[max(0, index - 2)]
+            let rise = max(0, short[index] - previous) * 5.5
+            transients[index] = max(value(beats, index), min(1, rise))
+            let future = phrase[min(count - 1, index + look)]
+            let past = phrase[max(0, index - look)]
+            buildups[index] = smoothstep(max(0, (future - phrase[index]) * 2.8 + (phrase[index] - past) * 1.35))
+            let intensity = energy[index] * 0.72 + min(1, beatDensity[index] * 2.4) * 0.28
+            climaxes[index] = smoothstep((intensity - 0.52) / 0.48)
+        }
+        transients = asymmetricSmooth(transients, attack: 0.72, release: 0.18)
+        buildups = movingAverage(buildups, radius: Int(frameRate * 0.38))
+        climaxes = movingAverage(climaxes, radius: Int(frameRate * 0.55))
+        let quietness = energy.map { smoothstep((0.42 - $0) / 0.42) }
+        warmth = movingAverage(warmth, radius: Int(frameRate * 0.8))
+        let sectionProgress = detectSectionProgress(energy: energy, warmth: warmth)
+        return MusicalStructure(
+            energy: energy,
+            transients: transients,
+            buildups: buildups,
+            climaxes: climaxes,
+            quietness: quietness,
+            warmth: warmth,
+            sectionProgress: sectionProgress
+        )
+    }
+
+    private func movingAverage(_ values: [Float], radius: Int) -> [Float] {
+        guard !values.isEmpty, radius > 0 else { return values }
+        var prefix = [Float](repeating: 0, count: values.count + 1)
+        for index in values.indices { prefix[index + 1] = prefix[index] + values[index] }
+        return values.indices.map { index in
+            let lower = max(0, index - radius)
+            let upper = min(values.count, index + radius + 1)
+            return (prefix[upper] - prefix[lower]) / Float(upper - lower)
+        }
+    }
+
+    private func asymmetricSmooth(_ values: [Float], attack: Float, release: Float) -> [Float] {
+        var result = [Float](repeating: 0, count: values.count)
+        var envelope: Float = 0
+        for index in values.indices {
+            let coefficient = values[index] > envelope ? attack : release
+            envelope += (values[index] - envelope) * coefficient
+            result[index] = envelope
+        }
+        return result
+    }
+
+    private func detectSectionProgress(energy: [Float], warmth: [Float]) -> [Float] {
+        guard !energy.isEmpty else { return [] }
+        let window = max(1, Int(frameRate * 1.4))
+        let minimumSection = max(1, Int(frameRate * 4.0))
+        var boundaries = [0]
+        var lastBoundary = 0
+        if energy.count > window * 2 {
+            for index in window..<(energy.count - window) {
+                guard index - lastBoundary >= minimumSection else { continue }
+                let energyChange = abs(energy[index + window] - energy[index - window])
+                let colorChange = abs(warmth[index + window] - warmth[index - window])
+                if energyChange + colorChange * 0.45 > 0.26 {
+                    boundaries.append(index)
+                    lastBoundary = index
+                }
+            }
+        }
+        boundaries.append(energy.count)
+        var progress = [Float](repeating: 0, count: energy.count)
+        for boundaryIndex in 0..<(boundaries.count - 1) {
+            let start = boundaries[boundaryIndex]
+            let end = boundaries[boundaryIndex + 1]
+            let length = max(1, end - start)
+            for index in start..<end { progress[index] = Float(index - start) / Float(length) }
+        }
+        return progress
+    }
+
+    private func smoothstep(_ value: Float) -> Float {
+        let x = max(0, min(1, value))
+        return x * x * (3 - 2 * x)
+    }
+
+    private func value(_ values: [Float], _ index: Int) -> Float {
+        values.isEmpty ? 0 : values[min(index, values.count - 1)]
     }
 
     private func makeBandRanges(sampleRate: Double) -> [Range<Int>] {
@@ -236,6 +382,13 @@ final class AudioAnalysisCache: @unchecked Sendable {
         let mid: Data
         let high: Data
         let beats: Data
+        let energy: Data
+        let transients: Data
+        let buildups: Data
+        let climaxes: Data
+        let quietness: Data
+        let warmth: Data
+        let sectionProgress: Data
         let spectrum: Data
         let waveform: Data
     }
@@ -263,7 +416,14 @@ final class AudioAnalysisCache: @unchecked Sendable {
             high: floats(payload.high),
             beats: floats(payload.beats),
             spectrum: rows(payload.spectrum, width: payload.spectrumWidth),
-            waveform: rows(payload.waveform, width: payload.waveformWidth)
+            waveform: rows(payload.waveform, width: payload.waveformWidth),
+            energy: floats(payload.energy),
+            transients: floats(payload.transients),
+            buildups: floats(payload.buildups),
+            climaxes: floats(payload.climaxes),
+            quietness: floats(payload.quietness),
+            warmth: floats(payload.warmth),
+            sectionProgress: floats(payload.sectionProgress)
         )
     }
 
@@ -286,6 +446,13 @@ final class AudioAnalysisCache: @unchecked Sendable {
             mid: bytes(analysis.mid),
             high: bytes(analysis.high),
             beats: bytes(analysis.beats),
+            energy: bytes(analysis.energy),
+            transients: bytes(analysis.transients),
+            buildups: bytes(analysis.buildups),
+            climaxes: bytes(analysis.climaxes),
+            quietness: bytes(analysis.quietness),
+            warmth: bytes(analysis.warmth),
+            sectionProgress: bytes(analysis.sectionProgress),
             spectrum: bytes(flatten(analysis.spectrum, width: spectrumWidth)),
             waveform: bytes(flatten(analysis.waveform, width: waveformWidth))
         )

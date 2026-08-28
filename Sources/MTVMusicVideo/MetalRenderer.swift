@@ -19,10 +19,15 @@ final class MetalRenderer {
     private let radialPipeline: MTLRenderPipelineState
     private let texturePipeline: MTLRenderPipelineState
     private let vignettePipeline: MTLRenderPipelineState
+    private let postPipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
     private var textureCache: CVMetalTextureCache?
     private var retainedCVTexture: CVMetalTexture?
     private var previewTexture: MTLTexture?
+    private var sceneTexture: MTLTexture?
+    private var historyTexture: MTLTexture?
+    private var historyValid = false
+    private var lastPostTime: Double?
     private var vertexBuffer: MTLBuffer?
     private var vertexBufferCapacity = 0
     private var vertexBufferOffset = 0
@@ -69,16 +74,19 @@ final class MetalRenderer {
 
         let alpha = Blend(src: .one, dst: .oneMinusSourceAlpha)
         let additive = Blend(src: .one, dst: .one)
+        let replace = Blend(src: .one, dst: .zero)
         guard let colorPipeline = pipeline("fragment_color", blend: alpha),
               let additiveColorPipeline = pipeline("fragment_color", blend: additive),
               let radialPipeline = pipeline("fragment_radial", blend: additive),
               let texturePipeline = pipeline("fragment_texture", blend: alpha),
-              let vignettePipeline = pipeline("fragment_vignette", blend: alpha) else { return nil }
+              let vignettePipeline = pipeline("fragment_vignette", blend: alpha),
+              let postPipeline = pipeline("fragment_post", blend: replace) else { return nil }
         self.colorPipeline = colorPipeline
         self.additiveColorPipeline = additiveColorPipeline
         self.radialPipeline = radialPipeline
         self.texturePipeline = texturePipeline
         self.vignettePipeline = vignettePipeline
+        self.postPipeline = postPipeline
 
         let samplerDesc = MTLSamplerDescriptor()
         samplerDesc.minFilter = .linear
@@ -113,9 +121,15 @@ final class MetalRenderer {
         vignetteAlpha: Float,
         accentWash: SIMD4<Float>,
         mesh: VisualizerMesh,
-        lyrics: TextureLayer?
+        lyrics: TextureLayer?,
+        postProcess: PostProcessSettings
     ) {
-        guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let (sceneTexture, historyTexture) = intermediateTextures(size: size) else { return }
+        let timeDelta = lastPostTime.map { postProcess.time - $0 }
+        if let timeDelta, timeDelta <= 0.001 || timeDelta > 0.20 {
+            historyValid = false
+        }
         prepareVertexBuffer(
             vertexCount: backgrounds.count * 6
                 + placeholder.count
@@ -125,14 +139,24 @@ final class MetalRenderer {
                 + mesh.soft.count
                 + mesh.radials.count
                 + mesh.additive.count
+                + 6
                 + (lyrics == nil ? 0 : 6)
         )
-        let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = texture
-        pass.colorAttachments[0].loadAction = .clear
-        pass.colorAttachments[0].storeAction = .store
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.02, green: 0.03, blue: 0.06, alpha: 1)
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        if !historyValid {
+            let historyPass = MTLRenderPassDescriptor()
+            historyPass.colorAttachments[0].texture = historyTexture
+            historyPass.colorAttachments[0].loadAction = .clear
+            historyPass.colorAttachments[0].storeAction = .store
+            historyPass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+            commandBuffer.makeRenderCommandEncoder(descriptor: historyPass)?.endEncoding()
+        }
+
+        let scenePass = MTLRenderPassDescriptor()
+        scenePass.colorAttachments[0].texture = sceneTexture
+        scenePass.colorAttachments[0].loadAction = .clear
+        scenePass.colorAttachments[0].storeAction = .store
+        scenePass.colorAttachments[0].clearColor = MTLClearColor(red: 0.02, green: 0.03, blue: 0.06, alpha: 1)
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: scenePass) else { return }
 
         var uniforms = GPUUniforms(size: SIMD2(Float(size.width), Float(size.height)))
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<GPUUniforms>.stride, index: 1)
@@ -184,15 +208,56 @@ final class MetalRenderer {
         if !mesh.additive.isEmpty {
             draw(mesh.additive, pipeline: additiveColorPipeline, encoder: encoder)
         }
-        if let lyrics {
-            drawTexturedQuad(lyrics, encoder: encoder)
-        }
         encoder.endEncoding()
+
+        let postPass = MTLRenderPassDescriptor()
+        postPass.colorAttachments[0].texture = texture
+        postPass.colorAttachments[0].loadAction = .clear
+        postPass.colorAttachments[0].storeAction = .store
+        postPass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        guard let postEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: postPass) else { return }
+        postEncoder.setVertexBytes(&uniforms, length: MemoryLayout<GPUUniforms>.stride, index: 1)
+        var postUniforms = postProcess.uniforms(size: size, historyValid: historyValid)
+        postEncoder.setFragmentBytes(&postUniforms, length: MemoryLayout<GPUPostUniforms>.stride, index: 0)
+        postEncoder.setFragmentTexture(sceneTexture, index: 0)
+        postEncoder.setFragmentTexture(historyTexture, index: 1)
+        postEncoder.setFragmentSamplerState(sampler, index: 0)
+        drawFullscreenQuad(size: size, pipeline: postPipeline, encoder: postEncoder)
+        postEncoder.endEncoding()
+
+        if let blit = commandBuffer.makeBlitCommandEncoder() {
+            blit.copy(
+                from: texture,
+                sourceSlice: 0,
+                sourceLevel: 0,
+                sourceOrigin: .init(x: 0, y: 0, z: 0),
+                sourceSize: .init(width: texture.width, height: texture.height, depth: 1),
+                to: historyTexture,
+                destinationSlice: 0,
+                destinationLevel: 0,
+                destinationOrigin: .init(x: 0, y: 0, z: 0)
+            )
+            blit.endEncoding()
+        }
+
+        if let lyrics {
+            let lyricsPass = MTLRenderPassDescriptor()
+            lyricsPass.colorAttachments[0].texture = texture
+            lyricsPass.colorAttachments[0].loadAction = .load
+            lyricsPass.colorAttachments[0].storeAction = .store
+            if let lyricsEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: lyricsPass) {
+                lyricsEncoder.setVertexBytes(&uniforms, length: MemoryLayout<GPUUniforms>.stride, index: 1)
+                drawTexturedQuad(lyrics, encoder: lyricsEncoder)
+                lyricsEncoder.endEncoding()
+            }
+        }
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
+        historyValid = commandBuffer.status == .completed
+        lastPostTime = postProcess.time
     }
 
-    func renderToPixelBuffer(_ pixelBuffer: CVPixelBuffer, size: CGSize, backgrounds: [TextureLayer], placeholder: [GPUVertex], darkness: Float, vignetteAlpha: Float, accentWash: SIMD4<Float>, mesh: VisualizerMesh, lyrics: TextureLayer?) -> Bool {
+    func renderToPixelBuffer(_ pixelBuffer: CVPixelBuffer, size: CGSize, backgrounds: [TextureLayer], placeholder: [GPUVertex], darkness: Float, vignetteAlpha: Float, accentWash: SIMD4<Float>, mesh: VisualizerMesh, lyrics: TextureLayer?, postProcess: PostProcessSettings) -> Bool {
         guard let texture = makeTextureFromPixelBuffer(pixelBuffer) else { return false }
         render(
             to: texture,
@@ -203,7 +268,8 @@ final class MetalRenderer {
             vignetteAlpha: vignetteAlpha,
             accentWash: accentWash,
             mesh: mesh,
-            lyrics: lyrics
+            lyrics: lyrics,
+            postProcess: postProcess
         )
         retainedCVTexture = nil
         return true
@@ -249,6 +315,31 @@ final class MetalRenderer {
     private struct Blend {
         let src: MTLBlendFactor
         let dst: MTLBlendFactor
+    }
+
+    private func intermediateTextures(size: CGSize) -> (MTLTexture, MTLTexture)? {
+        let width = max(1, Int(size.width))
+        let height = max(1, Int(size.height))
+        if sceneTexture?.width != width || sceneTexture?.height != height || historyTexture?.width != width || historyTexture?.height != height {
+            sceneTexture = makeTexture(width: width, height: height)
+            historyTexture = makeTexture(width: width, height: height)
+            historyValid = false
+            lastPostTime = nil
+        }
+        guard let sceneTexture, let historyTexture else { return nil }
+        return (sceneTexture, historyTexture)
+    }
+
+    private func drawFullscreenQuad(size: CGSize, pipeline: MTLRenderPipelineState, encoder: MTLRenderCommandEncoder) {
+        let color = SIMD4<Float>(1, 1, 1, 1)
+        draw([
+            GPUVertex(position: SIMD2(0, 0), uv: SIMD2(0, 0), color: color),
+            GPUVertex(position: SIMD2(Float(size.width), 0), uv: SIMD2(1, 0), color: color),
+            GPUVertex(position: SIMD2(Float(size.width), Float(size.height)), uv: SIMD2(1, 1), color: color),
+            GPUVertex(position: SIMD2(0, 0), uv: SIMD2(0, 0), color: color),
+            GPUVertex(position: SIMD2(Float(size.width), Float(size.height)), uv: SIMD2(1, 1), color: color),
+            GPUVertex(position: SIMD2(0, Float(size.height)), uv: SIMD2(0, 1), color: color)
+        ], pipeline: pipeline, encoder: encoder)
     }
 
     private func drawTexturedQuad(_ layer: TextureLayer, encoder: MTLRenderCommandEncoder) {

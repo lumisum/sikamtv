@@ -17,16 +17,24 @@ struct VisualizerEngine {
         mesh.soft.reserveCapacity(12_000)
         mesh.additive.reserveCapacity(18_000)
         mesh.radials.reserveCapacity(1_200)
-        let spectrum = smooth(features.spectrum, amount: settings.visualizerSmoothing)
+        let understood = features.directed(amount: Float(settings.musicAwareness))
+        let spectrum = smooth(understood.spectrum, amount: settings.visualizerSmoothing)
         let frame = AudioFrameFeatures(
-            amplitude: features.amplitude,
-            loudness: features.loudness,
-            bass: features.bass,
-            mid: features.mid,
-            high: features.high,
-            beat: features.beat,
+            amplitude: understood.amplitude,
+            loudness: understood.loudness,
+            bass: understood.bass,
+            mid: understood.mid,
+            high: understood.high,
+            beat: understood.beat,
             spectrum: spectrum,
-            waveform: features.waveform
+            waveform: understood.waveform,
+            energy: understood.energy,
+            transient: understood.transient,
+            buildup: understood.buildup,
+            climax: understood.climax,
+            quiet: understood.quiet,
+            warmth: understood.warmth,
+            sectionProgress: understood.sectionProgress
         )
         let desiredCenter = CGPoint(x: size.width * 0.5, y: size.height * settings.visualizerPositionY)
         let renderScale = size.width / max(1, settings.aspectRatio.size1080.width)
@@ -96,30 +104,32 @@ struct VisualizerEngine {
         let loudness = CGFloat(features.loudness)
         let bass = CGFloat(features.bass)
         let beat = CGFloat(features.beat)
-        let slowPulse = 0.82 + sin(CGFloat(time) * 0.31) * 0.10 + loudness * 0.14
-        let driftX = sin(CGFloat(time) * 0.071)
-        let driftY = cos(CGFloat(time) * 0.053)
+        let musicalMotion = CGFloat(features.energy * 0.55 + features.buildup * 0.30 + features.climax * 0.15)
+        let slowPulse = 0.78 + sin(CGFloat(time) * (0.22 + musicalMotion * 0.20)) * 0.09 + loudness * 0.12 + CGFloat(features.climax) * 0.12
+        let sectionOffset = CGFloat(features.sectionProgress) * .pi * 2
+        let driftX = sin(CGFloat(time) * (0.052 + musicalMotion * 0.035) + sectionOffset * 0.18)
+        let driftY = cos(CGFloat(time) * (0.041 + musicalMotion * 0.028) - sectionOffset * 0.12)
 
         appendRadial(
             &mesh.radials,
             center: CGPoint(x: size.width * (0.20 + driftX * 0.08), y: size.height * (0.74 + driftY * 0.05)),
             radiusX: size.width * (0.46 + bass * 0.05),
             radiusY: size.height * 0.34,
-            color: gpuColor(palette.accent, alpha: glow * motionBoost * (0.055 + beat * 0.025) * slowPulse)
+            color: gpuColor(palette.accent, alpha: glow * motionBoost * (0.045 + beat * 0.025 + CGFloat(features.climax) * 0.035) * slowPulse)
         )
         appendRadial(
             &mesh.radials,
             center: CGPoint(x: size.width * (0.82 - driftX * 0.07), y: size.height * (0.35 - driftY * 0.06)),
             radiusX: size.width * 0.42,
             radiusY: size.height * (0.30 + loudness * 0.04),
-            color: gpuColor(palette.secondary, alpha: glow * motionBoost * (0.050 + loudness * 0.030))
+            color: gpuColor(palette.secondary, alpha: glow * motionBoost * (0.038 + loudness * 0.028 + CGFloat(features.buildup) * 0.035))
         )
         appendRadial(
             &mesh.radials,
             center: CGPoint(x: size.width * (0.52 + driftY * 0.05), y: size.height * (0.88 - driftX * 0.04)),
             radiusX: size.width * 0.30,
             radiusY: size.height * 0.19,
-            color: gpuColor(palette.warm, alpha: glow * motionBoost * (0.028 + beat * 0.026))
+            color: gpuColor(palette.warm, alpha: glow * motionBoost * (0.020 + beat * 0.022 + CGFloat(features.warmth) * CGFloat(features.energy) * 0.030))
         )
     }
 
@@ -145,21 +155,21 @@ struct VisualizerEngine {
     private func appendAura(_ mesh: inout VisualizerMesh, center: CGPoint, size: CGSize, features: AudioFrameFeatures, settings: RenderSettings, palette: VisualPalette) {
         let glow = CGFloat(settings.visualizerGlow)
         let minimum = min(size.width, size.height)
-        let outerRadius = minimum * (0.30 + CGFloat(features.bass) * 0.08) * settings.visualizerScale
-        let innerRadius = minimum * (0.11 + CGFloat(features.beat) * 0.06) * settings.visualizerScale
+        let outerRadius = minimum * (0.28 + CGFloat(features.bass) * 0.08 + CGFloat(features.energy) * 0.035) * settings.visualizerScale
+        let innerRadius = minimum * (0.10 + CGFloat(features.beat) * 0.055 + CGFloat(features.transient) * 0.025) * settings.visualizerScale
         appendRadial(
             &mesh.radials,
             center: center,
             radiusX: outerRadius * 1.85,
             radiusY: outerRadius * 0.52,
-            color: gpuColor(palette.cool, alpha: glow * (0.055 + CGFloat(features.loudness) * 0.075))
+            color: gpuColor(palette.cool, alpha: glow * (0.045 + CGFloat(features.loudness) * 0.065 + CGFloat(features.buildup) * 0.035))
         )
         appendRadial(
             &mesh.radials,
             center: center,
             radiusX: outerRadius * 0.78,
             radiusY: outerRadius * 0.78,
-            color: gpuColor(palette.accent, alpha: glow * (0.070 + CGFloat(features.beat) * 0.095))
+            color: gpuColor(palette.accent, alpha: glow * (0.055 + CGFloat(features.beat) * 0.080 + CGFloat(features.climax) * 0.075))
         )
         appendRadial(
             &mesh.radials,
@@ -428,14 +438,26 @@ struct VisualizerEngine {
             let seed = CGFloat(index)
             let source = min(spectrum.count - 1, Int(pseudo(seed * 3.17) * CGFloat(spectrum.count - 1)))
             let energy = CGFloat(spectrum[source])
-            let angle = pseudo(seed * 5.73) * .pi * 2 + CGFloat(time) * (0.012 + pseudo(seed) * 0.020)
-            let orbit = sqrt(pseudo(seed * 8.19)) * (0.32 + energy * 0.18 * settings.visualizerStrength)
+            let angularSpeed = 0.010 + pseudo(seed) * 0.018
+            let lifeSpeed = 0.012 + pseudo(seed * 9.41) * 0.010
+            let life = (pseudo(seed * 1.83) + CGFloat(time) * lifeSpeed).truncatingRemainder(dividingBy: 1)
+            let lifeFade = pow(max(0, sin(life * .pi)), 0.58)
+            let angle = pseudo(seed * 5.73) * .pi * 2 + CGFloat(time) * angularSpeed + sin(life * .pi * 2) * 0.08
+            let orbit = sqrt(pseudo(seed * 8.19)) * (0.30 + life * 0.08 + energy * 0.14 * settings.visualizerStrength)
             let x = center.x + cos(angle) * width * orbit
             let y = center.y + sin(angle * 1.07) * height * orbit + sin(CGFloat(time) * 0.10 + seed) * height * 0.025
             let radius = (0.75 + pseudo(seed * 2.41) * 1.8 + energy * 3.2 + CGFloat(features.high) * 1.4) * renderScale
             let color = palette.ribbon(index)
-            appendRadial(&mesh.radials, center: CGPoint(x: x, y: y), radiusX: radius * 4.0, radiusY: radius * 4.0, color: gpuColor(color, alpha: 0.018 + energy * 0.045))
-            appendRadial(&mesh.radials, center: CGPoint(x: x, y: y), radiusX: radius, radiusY: radius, color: gpuColor(VisualPalette.mix(color, palette.highlight, 0.45), alpha: 0.12 + energy * 0.30 + CGFloat(features.beat) * 0.08))
+            let previousAngle = angle - angularSpeed * 7.0
+            let previousOrbit = max(0.02, orbit - lifeSpeed * 1.8)
+            let previous = SIMD2(
+                Float(center.x + cos(previousAngle) * width * previousOrbit),
+                Float(center.y + sin(previousAngle * 1.07) * height * previousOrbit)
+            )
+            let current = SIMD2(Float(x), Float(y))
+            appendPolyline(&mesh.additive, points: [previous, current], width: Float(max(0.5, radius * 0.38)), color: gpuColor(color, alpha: lifeFade * (0.025 + energy * 0.075 + CGFloat(features.buildup) * 0.035)), closed: false)
+            appendRadial(&mesh.radials, center: CGPoint(x: x, y: y), radiusX: radius * 4.0, radiusY: radius * 4.0, color: gpuColor(color, alpha: lifeFade * (0.014 + energy * 0.040)))
+            appendRadial(&mesh.radials, center: CGPoint(x: x, y: y), radiusX: radius, radiusY: radius, color: gpuColor(VisualPalette.mix(color, palette.highlight, 0.45), alpha: lifeFade * (0.10 + energy * 0.28 + CGFloat(features.transient) * 0.10)))
         }
     }
 
@@ -477,22 +499,30 @@ struct VisualizerEngine {
         appendRadial(&mesh.radials, center: center, radiusX: min(size.width, size.height) * 0.27, radiusY: min(size.width, size.height) * 0.27, color: gpuColor(palette.cool, alpha: 0.018 + CGFloat(features.bass) * 0.040))
         for index in 0..<count {
             let seed = CGFloat(index)
-            let angle = pseudo(seed * 7.13) * .pi * 2 + sin(CGFloat(time) * 0.035 + seed) * 0.025
-            let speed = 0.028 + CGFloat(features.loudness) * 0.038 + CGFloat(features.beat) * 0.018
+            // Keep trajectory speed independent from instantaneous loudness so
+            // stars retain inertia. Music changes radiance and trail length.
+            let speed = 0.026 + pseudo(seed * 6.71) * 0.030
             let depth = (pseudo(seed * 2.91) + CGFloat(time) * speed).truncatingRemainder(dividingBy: 1)
             let source = min(spectrum.count - 1, Int(pseudo(seed * 4.33) * CGFloat(spectrum.count - 1)))
             let energy = CGFloat(spectrum[source])
-            let radius = maximum * pow(depth, 1.55)
-            let streak = min(maximum * 0.13, maximum * (0.008 + depth * (0.040 + energy * 0.075 * settings.visualizerStrength)))
+            let lifeFade = min(1, depth / 0.10) * min(1, (1 - depth) / 0.12)
+            let spiral = (depth * depth - 0.25) * (0.08 + CGFloat(features.buildup) * 0.05)
+            let angle = pseudo(seed * 7.13) * .pi * 2 + CGFloat(time) * 0.006 + spiral
+            let radius = maximum * pow(depth, 1.55) * (1 + CGFloat(features.climax) * 0.035)
+            let streak = min(maximum * 0.15, maximum * (0.007 + depth * (0.035 + energy * 0.070 * settings.visualizerStrength + CGFloat(features.transient) * 0.030)))
             let inner = max(0, radius - streak)
-            let start = SIMD2(Float(center.x + cos(angle) * inner), Float(center.y + sin(angle) * inner * 0.72))
+            let startAngle = angle - (0.012 + depth * 0.025)
+            let middleAngle = (startAngle + angle) * 0.5
+            let middleRadius = (inner + radius) * 0.5
+            let start = SIMD2(Float(center.x + cos(startAngle) * inner), Float(center.y + sin(startAngle) * inner * 0.72))
+            let middle = SIMD2(Float(center.x + cos(middleAngle) * middleRadius), Float(center.y + sin(middleAngle) * middleRadius * 0.72))
             let end = SIMD2(Float(center.x + cos(angle) * radius), Float(center.y + sin(angle) * radius * 0.72))
             let color = palette.ribbon(index)
-            appendPolyline(&mesh.additive, points: [start, end], width: Float((5 + CGFloat(settings.visualizerGlow) * 6) * renderScale * max(0.35, depth)), color: gpuColor(color, alpha: 0.012 + depth * 0.040 + energy * 0.025), closed: false)
-            appendPolyline(&mesh.additive, points: [start, end], width: Float(max(0.55, (0.55 + depth * 1.15) * renderScale)), color: gpuColor(color, alpha: 0.10 + depth * 0.32 + energy * 0.18), closed: false)
+            appendPolyline(&mesh.additive, points: [start, middle, end], width: Float((5 + CGFloat(settings.visualizerGlow) * 6) * renderScale * max(0.35, depth)), color: gpuColor(color, alpha: lifeFade * (0.010 + depth * 0.036 + energy * 0.024)), closed: false)
+            appendPolyline(&mesh.additive, points: [start, middle, end], width: Float(max(0.55, (0.55 + depth * 1.15) * renderScale)), color: gpuColor(color, alpha: lifeFade * (0.08 + depth * 0.30 + energy * 0.16 + CGFloat(features.transient) * 0.10)), closed: false)
             if index.isMultiple(of: 3) {
                 let dot = (0.7 + depth * 2.0 + energy * 1.8) * renderScale
-                appendRadial(&mesh.radials, center: CGPoint(x: CGFloat(end.x), y: CGFloat(end.y)), radiusX: dot, radiusY: dot, color: gpuColor(palette.highlight, alpha: 0.12 + depth * 0.26))
+                appendRadial(&mesh.radials, center: CGPoint(x: CGFloat(end.x), y: CGFloat(end.y)), radiusX: dot, radiusY: dot, color: gpuColor(palette.highlight, alpha: lifeFade * (0.10 + depth * 0.25)))
             }
         }
     }

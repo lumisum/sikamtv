@@ -99,7 +99,7 @@ final class VideoExporter: @unchecked Sendable {
         audioInput.expectsMediaDataInRealTime = false
         writer.add(audioInput)
         let reader = try AVAssetReader(asset: mixedAudio.composition)
-        let audioTracks = mixedAudio.composition.tracks(withMediaType: .audio)
+        let audioTracks = AVAssetMetadata.tracks(in: mixedAudio.composition, mediaType: .audio)
         guard !audioTracks.isEmpty else { throw ExportError.cannotReadAudio }
         let audioOutput = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: [
             AVFormatIDKey: kAudioFormatLinearPCM,

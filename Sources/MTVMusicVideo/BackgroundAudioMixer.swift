@@ -26,11 +26,12 @@ enum BackgroundAudioMixer {
         let composition = AVMutableComposition()
         var parameters: [AVAudioMixInputParameters] = []
         let mainAsset = AVAsset(url: mainAudioURL)
-        guard let mainSource = mainAsset.tracks(withMediaType: .audio).first,
+        guard let mainSource = AVAssetMetadata.tracks(in: mainAsset, mediaType: .audio).first,
               let mainTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw NSError(domain: "SikaMTV.BackgroundAudioMixer", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法读取主音乐音轨"])
         }
-        let mainDuration = min(projectDuration, mainAsset.duration.seconds.isFinite ? mainAsset.duration.seconds : projectDuration)
+        let loadedDuration = AVAssetMetadata.duration(of: mainAsset)?.seconds ?? projectDuration
+        let mainDuration = min(projectDuration, loadedDuration.isFinite ? loadedDuration : projectDuration)
         try mainTrack.insertTimeRange(CMTimeRange(start: .zero, duration: cmTime(mainDuration)), of: mainSource, at: .zero)
         let mainParameters = AVMutableAudioMixInputParameters(track: mainTrack)
         mainParameters.setVolume(1, at: .zero)
@@ -93,7 +94,7 @@ enum BackgroundAudioMixer {
         transitionDuration: Double
     ) throws {
         let asset = AVAsset(url: media.url)
-        guard let source = asset.tracks(withMediaType: .audio).first else { return }
+        guard let source = AVAssetMetadata.tracks(in: asset, mediaType: .audio).first else { return }
         let tracks = (0..<2).compactMap { _ in composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) }
         guard tracks.count == 2 else { return }
         let trackParameters = tracks.map { AVMutableAudioMixInputParameters(track: $0) }
@@ -127,7 +128,7 @@ enum BackgroundAudioMixer {
 
         for (index, media) in backgrounds.enumerated() where media.kind == .video && media.hasAudio && media.duration > 0 {
             let asset = AVAsset(url: media.url)
-            guard let source = asset.tracks(withMediaType: .audio).first else { continue }
+            guard let source = AVAssetMetadata.tracks(in: asset, mediaType: .audio).first else { continue }
             let segmentStart = Double(index) * segmentDuration
             let segmentEnd = min(projectDuration, segmentStart + segmentDuration)
             var destination = segmentStart

@@ -340,6 +340,13 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var visualizerGlow: Double = 0.96
     var visualizerSmoothing: Double = 0.72
     var visualizerDensity: Double = 0.86
+    var visualizerBrilliance: Double = 0.88
+    var visualizerIntegration: Double = 0.78
+    var visualizerTrail: Double = 0.42
+    var visualizerColorRichness: Double = 0.92
+    var visualizerDepth: Double = 0.74
+    var visualizerBeatImpact: Double = 0.76
+    var musicAwareness: Double = 0.92
 
     var lyricSize: Double = 42
     var lyricPositionY: Double = 0.60
@@ -351,6 +358,88 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var lyricAnimation: LyricAnimation = .bloom
     var lyricAlignment: LyricAlignment = .center
     var fontPostScriptName: String = FontManager.defaultPostScriptName
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case aspectRatio, template, visualizer, blur, darkness, saturation
+        case backgroundTransition, backgroundTransitionDuration
+        case visualizerStrength, visualizerPositionY, visualizerScale, visualizerGlow, visualizerSmoothing, visualizerDensity
+        case visualizerBrilliance, visualizerIntegration, visualizerTrail, visualizerColorRichness, visualizerDepth, visualizerBeatImpact, musicAwareness
+        case lyricSize, lyricPositionY, lyricWidth, lyricLineSpacing, lyricInactiveOpacity, lyricGlow, lyricAnimationDuration
+        case lyricAnimation, lyricAlignment, fontPostScriptName
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = RenderSettings()
+        aspectRatio = try container.decodeIfPresent(AspectRatio.self, forKey: .aspectRatio) ?? defaults.aspectRatio
+        template = try container.decodeIfPresent(VisualTemplate.self, forKey: .template) ?? defaults.template
+        visualizer = try container.decodeIfPresent(VisualizerKind.self, forKey: .visualizer) ?? defaults.visualizer
+        blur = try container.decodeIfPresent(Double.self, forKey: .blur) ?? defaults.blur
+        darkness = try container.decodeIfPresent(Double.self, forKey: .darkness) ?? defaults.darkness
+        saturation = try container.decodeIfPresent(Double.self, forKey: .saturation) ?? defaults.saturation
+        backgroundTransition = try container.decodeIfPresent(BackgroundTransition.self, forKey: .backgroundTransition) ?? defaults.backgroundTransition
+        backgroundTransitionDuration = try container.decodeIfPresent(Double.self, forKey: .backgroundTransitionDuration) ?? defaults.backgroundTransitionDuration
+        visualizerStrength = try container.decodeIfPresent(Double.self, forKey: .visualizerStrength) ?? defaults.visualizerStrength
+        visualizerPositionY = try container.decodeIfPresent(Double.self, forKey: .visualizerPositionY) ?? defaults.visualizerPositionY
+        visualizerScale = try container.decodeIfPresent(Double.self, forKey: .visualizerScale) ?? defaults.visualizerScale
+        visualizerGlow = try container.decodeIfPresent(Double.self, forKey: .visualizerGlow) ?? defaults.visualizerGlow
+        visualizerSmoothing = try container.decodeIfPresent(Double.self, forKey: .visualizerSmoothing) ?? defaults.visualizerSmoothing
+        visualizerDensity = try container.decodeIfPresent(Double.self, forKey: .visualizerDensity) ?? defaults.visualizerDensity
+        visualizerBrilliance = try container.decodeIfPresent(Double.self, forKey: .visualizerBrilliance) ?? defaults.visualizerBrilliance
+        visualizerIntegration = try container.decodeIfPresent(Double.self, forKey: .visualizerIntegration) ?? defaults.visualizerIntegration
+        visualizerTrail = try container.decodeIfPresent(Double.self, forKey: .visualizerTrail) ?? defaults.visualizerTrail
+        visualizerColorRichness = try container.decodeIfPresent(Double.self, forKey: .visualizerColorRichness) ?? defaults.visualizerColorRichness
+        visualizerDepth = try container.decodeIfPresent(Double.self, forKey: .visualizerDepth) ?? defaults.visualizerDepth
+        visualizerBeatImpact = try container.decodeIfPresent(Double.self, forKey: .visualizerBeatImpact) ?? defaults.visualizerBeatImpact
+        musicAwareness = try container.decodeIfPresent(Double.self, forKey: .musicAwareness) ?? defaults.musicAwareness
+        lyricSize = try container.decodeIfPresent(Double.self, forKey: .lyricSize) ?? defaults.lyricSize
+        lyricPositionY = try container.decodeIfPresent(Double.self, forKey: .lyricPositionY) ?? defaults.lyricPositionY
+        lyricWidth = try container.decodeIfPresent(Double.self, forKey: .lyricWidth) ?? defaults.lyricWidth
+        lyricLineSpacing = try container.decodeIfPresent(Double.self, forKey: .lyricLineSpacing) ?? defaults.lyricLineSpacing
+        lyricInactiveOpacity = try container.decodeIfPresent(Double.self, forKey: .lyricInactiveOpacity) ?? defaults.lyricInactiveOpacity
+        lyricGlow = try container.decodeIfPresent(Double.self, forKey: .lyricGlow) ?? defaults.lyricGlow
+        lyricAnimationDuration = try container.decodeIfPresent(Double.self, forKey: .lyricAnimationDuration) ?? defaults.lyricAnimationDuration
+        lyricAnimation = try container.decodeIfPresent(LyricAnimation.self, forKey: .lyricAnimation) ?? defaults.lyricAnimation
+        lyricAlignment = try container.decodeIfPresent(LyricAlignment.self, forKey: .lyricAlignment) ?? defaults.lyricAlignment
+        fontPostScriptName = try container.decodeIfPresent(String.self, forKey: .fontPostScriptName) ?? defaults.fontPostScriptName
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(aspectRatio, forKey: .aspectRatio)
+        try container.encode(template, forKey: .template)
+        try container.encode(visualizer, forKey: .visualizer)
+        try container.encode(blur, forKey: .blur)
+        try container.encode(darkness, forKey: .darkness)
+        try container.encode(saturation, forKey: .saturation)
+        try container.encode(backgroundTransition, forKey: .backgroundTransition)
+        try container.encode(backgroundTransitionDuration, forKey: .backgroundTransitionDuration)
+        try container.encode(visualizerStrength, forKey: .visualizerStrength)
+        try container.encode(visualizerPositionY, forKey: .visualizerPositionY)
+        try container.encode(visualizerScale, forKey: .visualizerScale)
+        try container.encode(visualizerGlow, forKey: .visualizerGlow)
+        try container.encode(visualizerSmoothing, forKey: .visualizerSmoothing)
+        try container.encode(visualizerDensity, forKey: .visualizerDensity)
+        try container.encode(visualizerBrilliance, forKey: .visualizerBrilliance)
+        try container.encode(visualizerIntegration, forKey: .visualizerIntegration)
+        try container.encode(visualizerTrail, forKey: .visualizerTrail)
+        try container.encode(visualizerColorRichness, forKey: .visualizerColorRichness)
+        try container.encode(visualizerDepth, forKey: .visualizerDepth)
+        try container.encode(visualizerBeatImpact, forKey: .visualizerBeatImpact)
+        try container.encode(musicAwareness, forKey: .musicAwareness)
+        try container.encode(lyricSize, forKey: .lyricSize)
+        try container.encode(lyricPositionY, forKey: .lyricPositionY)
+        try container.encode(lyricWidth, forKey: .lyricWidth)
+        try container.encode(lyricLineSpacing, forKey: .lyricLineSpacing)
+        try container.encode(lyricInactiveOpacity, forKey: .lyricInactiveOpacity)
+        try container.encode(lyricGlow, forKey: .lyricGlow)
+        try container.encode(lyricAnimationDuration, forKey: .lyricAnimationDuration)
+        try container.encode(lyricAnimation, forKey: .lyricAnimation)
+        try container.encode(lyricAlignment, forKey: .lyricAlignment)
+        try container.encode(fontPostScriptName, forKey: .fontPostScriptName)
+    }
 }
 
 struct AudioFrameFeatures: Sendable {
@@ -362,16 +451,81 @@ struct AudioFrameFeatures: Sendable {
     let beat: Float
     let spectrum: [Float]
     let waveform: [Float]
+    let energy: Float
+    let transient: Float
+    let buildup: Float
+    let climax: Float
+    let quiet: Float
+    let warmth: Float
+    let sectionProgress: Float
+
+    init(
+        amplitude: Float,
+        loudness: Float,
+        bass: Float,
+        mid: Float,
+        high: Float,
+        beat: Float,
+        spectrum: [Float],
+        waveform: [Float],
+        energy: Float = 0,
+        transient: Float = 0,
+        buildup: Float = 0,
+        climax: Float = 0,
+        quiet: Float = 1,
+        warmth: Float = 0.5,
+        sectionProgress: Float = 0
+    ) {
+        self.amplitude = amplitude
+        self.loudness = loudness
+        self.bass = bass
+        self.mid = mid
+        self.high = high
+        self.beat = beat
+        self.spectrum = spectrum
+        self.waveform = waveform
+        self.energy = energy
+        self.transient = transient
+        self.buildup = buildup
+        self.climax = climax
+        self.quiet = quiet
+        self.warmth = warmth
+        self.sectionProgress = sectionProgress
+    }
+
+    func directed(amount: Float) -> AudioFrameFeatures {
+        let awareness = max(0, min(1, amount))
+        let livingEnergy = loudness * (1 - awareness * 0.48) + energy * awareness * 0.48
+        let directedBeat = max(beat, transient * (0.72 + climax * 0.28))
+        return AudioFrameFeatures(
+            amplitude: amplitude * (1 - awareness * 0.18) + livingEnergy * awareness * 0.18,
+            loudness: livingEnergy,
+            bass: min(1, bass * (1 + awareness * climax * 0.18)),
+            mid: min(1, mid * (1 + awareness * buildup * 0.14)),
+            high: min(1, high * (1 + awareness * (buildup + transient) * 0.12)),
+            beat: beat * (1 - awareness * 0.42) + directedBeat * awareness * 0.42,
+            spectrum: spectrum,
+            waveform: waveform,
+            energy: energy,
+            transient: transient,
+            buildup: buildup,
+            climax: climax,
+            quiet: quiet,
+            warmth: warmth,
+            sectionProgress: sectionProgress
+        )
+    }
 
     static let silent = AudioFrameFeatures(
         amplitude: 0, loudness: 0, bass: 0, mid: 0, high: 0, beat: 0,
         spectrum: Array(repeating: 0, count: 96),
-        waveform: Array(repeating: 0, count: 128)
+        waveform: Array(repeating: 0, count: 128),
+        energy: 0, transient: 0, buildup: 0, climax: 0, quiet: 1, warmth: 0.5, sectionProgress: 0
     )
 }
 
 struct AudioAnalysis: Codable, Sendable {
-    static let cacheVersion = 2
+    static let cacheVersion = 3
 
     let version: Int
     let duration: Double
@@ -385,6 +539,13 @@ struct AudioAnalysis: Codable, Sendable {
     let beats: [Float]
     let spectrum: [[Float]]
     let waveform: [[Float]]
+    let energy: [Float]
+    let transients: [Float]
+    let buildups: [Float]
+    let climaxes: [Float]
+    let quietness: [Float]
+    let warmth: [Float]
+    let sectionProgress: [Float]
 
     init(
         version: Int = AudioAnalysis.cacheVersion,
@@ -398,7 +559,14 @@ struct AudioAnalysis: Codable, Sendable {
         high: [Float]? = nil,
         beats: [Float]? = nil,
         spectrum: [[Float]],
-        waveform: [[Float]]? = nil
+        waveform: [[Float]]? = nil,
+        energy: [Float]? = nil,
+        transients: [Float]? = nil,
+        buildups: [Float]? = nil,
+        climaxes: [Float]? = nil,
+        quietness: [Float]? = nil,
+        warmth: [Float]? = nil,
+        sectionProgress: [Float]? = nil
     ) {
         self.version = version
         self.duration = duration
@@ -412,6 +580,13 @@ struct AudioAnalysis: Codable, Sendable {
         self.beats = beats ?? Array(repeating: 0, count: amplitudes.count)
         self.spectrum = spectrum
         self.waveform = waveform ?? Array(repeating: Array(repeating: 0, count: 128), count: amplitudes.count)
+        self.energy = energy ?? self.loudness
+        self.transients = transients ?? self.beats
+        self.buildups = buildups ?? Array(repeating: 0, count: amplitudes.count)
+        self.climaxes = climaxes ?? Array(repeating: 0, count: amplitudes.count)
+        self.quietness = quietness ?? self.loudness.map { 1 - $0 }
+        self.warmth = warmth ?? Array(repeating: 0.5, count: amplitudes.count)
+        self.sectionProgress = sectionProgress ?? Array(repeating: 0, count: amplitudes.count)
     }
 
     func frame(at time: Double) -> AudioFrameFeatures {
@@ -427,7 +602,14 @@ struct AudioAnalysis: Codable, Sendable {
             high: value(high, index),
             beat: value(beats, index),
             spectrum: array(spectrum, index, 96),
-            waveform: array(waveform, index, 128)
+            waveform: array(waveform, index, 128),
+            energy: value(energy, index),
+            transient: value(transients, index),
+            buildup: value(buildups, index),
+            climax: value(climaxes, index),
+            quiet: value(quietness, index),
+            warmth: value(warmth, index),
+            sectionProgress: value(sectionProgress, index)
         )
     }
 

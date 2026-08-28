@@ -59,8 +59,8 @@ final class VideoExporterTests: XCTestCase {
         let attributes = try FileManager.default.attributesOfItem(atPath: outputURL.path)
         XCTAssertGreaterThan((attributes[.size] as? NSNumber)?.intValue ?? 0, 10_000)
         let asset = AVAsset(url: outputURL)
-        XCTAssertFalse(asset.tracks(withMediaType: .video).isEmpty)
-        XCTAssertFalse(asset.tracks(withMediaType: .audio).isEmpty)
+        XCTAssertFalse(AVAssetMetadata.tracks(in: asset, mediaType: .video).isEmpty)
+        XCTAssertFalse(AVAssetMetadata.tracks(in: asset, mediaType: .audio).isEmpty)
     }
 
     func testEncodedMovieKeepsMetalBackgroundUpright() throws {

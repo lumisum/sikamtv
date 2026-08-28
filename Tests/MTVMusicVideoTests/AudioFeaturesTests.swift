@@ -11,6 +11,8 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(frame.waveform.count, 128)
         XCTAssertEqual(frame.bass, 0.64, accuracy: 0.001)
         XCTAssertEqual(frame.beat, 0.82, accuracy: 0.001)
+        XCTAssertEqual(frame.energy, frame.loudness, accuracy: 0.001)
+        XCTAssertEqual(frame.transient, frame.beat, accuracy: 0.001)
     }
 
     func testPreviewTargetsPreserveExportAspectRatio() {
@@ -30,8 +32,21 @@ final class AudioFeaturesTests: XCTestCase {
         settings.lyricAlignment = .leading
         settings.lyricPositionY = 0.71
         settings.visualizerGlow = 0.91
+        settings.visualizerIntegration = 0.67
+        settings.visualizerTrail = 0.41
+        settings.musicAwareness = 0.73
         let data = try JSONEncoder().encode(settings)
         XCTAssertEqual(try JSONDecoder().decode(RenderSettings.self, from: data), settings)
+    }
+
+    func testOlderSettingsGainNewVisualDefaultsWithoutLosingExistingValues() throws {
+        let data = Data(#"{"visualizerGlow":0.37,"lyricSize":55}"#.utf8)
+        let settings = try JSONDecoder().decode(RenderSettings.self, from: data)
+        XCTAssertEqual(settings.visualizerGlow, 0.37)
+        XCTAssertEqual(settings.lyricSize, 55)
+        XCTAssertEqual(settings.visualizerIntegration, RenderSettings().visualizerIntegration)
+        XCTAssertEqual(settings.visualizerTrail, RenderSettings().visualizerTrail)
+        XCTAssertEqual(settings.musicAwareness, RenderSettings().musicAwareness)
     }
 
     func testAnalyzerStreamsAudioAndDetectsTransientFeatures() throws {
@@ -62,6 +77,44 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(result.waveform.first?.count, 128)
         XCTAssertGreaterThan(result.beats.max() ?? 0, 0.5)
         XCTAssertGreaterThan(result.bass.max() ?? 0, 0.1)
+        XCTAssertEqual(result.energy.count, result.amplitudes.count)
+        XCTAssertEqual(result.transients.count, result.amplitudes.count)
+        XCTAssertGreaterThan(result.transients.max() ?? 0, 0.5)
+        XCTAssertTrue(result.sectionProgress.allSatisfy { (0...1).contains($0) })
+    }
+
+    func testWholeSongStructureFindsQuietBuildAndClimax() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sikamtv-structure-\(UUID().uuidString)")
+            .appendingPathExtension("caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sampleRate = 44_100.0
+        let duration = 8.0
+        let frameCount = Int(sampleRate * duration)
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount))!
+        buffer.frameLength = AVAudioFrameCount(frameCount)
+        let samples = buffer.floatChannelData![0]
+        for index in 0..<frameCount {
+            let time = Double(index) / sampleRate
+            let amplitude: Double
+            if time < 2 { amplitude = 0.015 }
+            else if time < 5 { amplitude = 0.05 + (time - 2) / 3 * 0.35 }
+            else { amplitude = 0.52 }
+            let pulse = time >= 5 && time.truncatingRemainder(dividingBy: 0.5) < 0.025 ? 0.35 : 0
+            samples[index] = Float(sin(time * 2 * .pi * 90) * amplitude + sin(time * 2 * .pi * 880) * amplitude * 0.28 + pulse)
+        }
+        try file.write(from: buffer)
+
+        let result = try AudioAnalyzer().analyze(url: url)
+        let early = result.frame(at: 0.8)
+        let rising = result.frame(at: 3.8)
+        let peak = result.frame(at: 6.2)
+        XCTAssertGreaterThan(early.quiet, peak.quiet + 0.35)
+        XCTAssertGreaterThan(peak.climax, early.climax + 0.35)
+        XCTAssertGreaterThan(result.buildups.max() ?? 0, 0.10)
+        XCTAssertGreaterThan(rising.energy, early.energy)
     }
 
     func testBackgroundAudioLoopUsesTheSameCrossfadeCadenceAsVideo() {
@@ -87,8 +140,8 @@ final class AudioFeaturesTests: XCTestCase {
         let disabled = try BackgroundAudioMixer.make(mainAudioURL: mainURL, backgrounds: [background], projectDuration: 1, backgroundAudioEnabled: false, backgroundVolume: 0.25, transitionDuration: 0.1)
         let enabled = try BackgroundAudioMixer.make(mainAudioURL: mainURL, backgrounds: [background], projectDuration: 1, backgroundAudioEnabled: true, backgroundVolume: 0.25, transitionDuration: 0.1)
 
-        XCTAssertEqual(disabled.composition.tracks(withMediaType: .audio).count, 1)
-        XCTAssertEqual(enabled.composition.tracks(withMediaType: .audio).count, 3)
+        XCTAssertEqual(AVAssetMetadata.tracks(in: disabled.composition, mediaType: .audio).count, 1)
+        XCTAssertEqual(AVAssetMetadata.tracks(in: enabled.composition, mediaType: .audio).count, 3)
         XCTAssertEqual(enabled.audioMix.inputParameters.count, 3)
     }
 
