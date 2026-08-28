@@ -149,9 +149,9 @@ enum MetalShaders {
             * sin(uv.y * 21.0 - uv.x * 7.0 + time * 0.17);
         float light = caustic * life * lightFlow * motionMask * (0.012 + energy * 0.018 + climax * 0.015);
         float3 lightTint = mix(float3(0.88, 0.96, 1.08), float3(1.08, 1.00, 0.86), warmth);
-        color += lightTint * max(0.0, light);
+        color += (1.0 - color) * lightTint * max(0.0, light);
         color *= 1.0 - max(0.0, -light) * 0.42;
-        color *= 1.0 + transient * life * awareness * 0.018 * motionMask;
+        color += (1.0 - color) * transient * life * awareness * 0.010 * motionMask;
         return float4(clamp(color, 0.0, 1.0) * in.color.a, in.color.a);
     }
 
@@ -227,7 +227,7 @@ enum MetalShaders {
         float radialMask = exp(-radius * (3.2 - depth * 0.8));
         float2 direction = radius > 0.0001 ? metric / radius : float2(0.0);
         direction.x /= max(aspect, 0.0001);
-        float refraction = integration * depth * (0.0008 + energy * 0.0008 + bass * 0.0020 + transient * beatImpact * 0.0018) * (1.0 - quietness * 0.42);
+        float refraction = integration * depth * (0.00055 + energy * 0.00055 + bass * 0.0012 + transient * beatImpact * 0.00055) * (1.0 - quietness * 0.42);
         uv += direction * radialWave * radialMask * refraction;
         uv += float2(
             sin((uv.y + time * 0.025) * 18.0 + mid * 3.0),
@@ -252,7 +252,8 @@ enum MetalShaders {
         float3 bloomFar = softBrightPass(bloomLevel(scene, samp, uv, texel * 12.0 * bloomSpread), 0.46);
         float3 bloom = bloomNear * 0.48 + bloomMid * 0.34 + bloomFar * 0.18;
         float bloomGain = brilliance * (0.13 + energy * 0.07 + transient * beatImpact * 0.12 + climax * 0.15) * (1.0 - quietness * 0.34);
-        color += bloom * bloomGain;
+        float highlightProtection = 1.0 - smoothstep(0.70, 0.98, luminance(color)) * 0.68;
+        color += bloom * bloomGain * highlightProtection;
 
         float3 previous = history.sample(samp, uv - direction * trail * 0.0018).rgb;
         float trailMix = trail * (0.040 + mid * 0.040 + buildup * 0.040 + climax * 0.025 + transient * beatImpact * 0.030);
@@ -269,8 +270,9 @@ enum MetalShaders {
             1.0 + sin(sectionProgress * 6.2831853 + 4.1887902) * 0.035
         );
         color *= mix(float3(1.0), sectionTint, awareness * richness * (0.16 + buildup * 0.16) * sectionArc);
-        color *= 1.0 + (transient * 0.045 + climax * 0.035) * beatImpact * brilliance;
-        color = color / (1.0 + max(color - 1.0, float3(0.0)) * 0.62);
+        float impactLight = (transient * 0.030 + climax * 0.024) * beatImpact * brilliance;
+        color += (1.0 - saturate(color)) * impactLight;
+        color = color / (1.0 + max(color - 0.82, float3(0.0)) * 0.38);
 
         float grain = (hash21(in.position.xy + time * 37.0) - 0.5) * (0.006 + brilliance * 0.009);
         color += grain * (0.45 + high * 0.55);

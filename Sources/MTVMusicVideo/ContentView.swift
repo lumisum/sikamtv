@@ -659,6 +659,10 @@ struct SettingsPanel: View {
             Text("选择模板会同时设置画面、视觉和歌词的推荐参数，之后仍可分别微调。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            Text("模板配色只用于音频可视化和文字光晕，不会再给背景自动染色。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             ForEach(VisualTemplate.allCases) { template in
                 Button { workspace.applyTemplate(template) } label: {
                     HStack(spacing: 10) {
@@ -696,24 +700,41 @@ struct SettingsPanel: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 12) {
-                Label("背景处理", systemImage: "photo.on.rectangle.angled").font(.headline)
+                HStack {
+                    Label("背景处理", systemImage: "photo.on.rectangle.angled").font(.headline)
+                    Spacer()
+                    Button("恢复自然") { workspace.resetBackgroundLook() }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                }
                 SliderRow(title: "背景模糊", value: $workspace.settings.blur, range: 0...40, suffix: " px")
-                SliderRow(title: "背景暗化", value: $workspace.settings.darkness, range: 0...0.8, displayMultiplier: 100, suffix: "%")
+                Toggle("智能保护图片主体", isOn: $workspace.settings.smartBlurEnabled)
+                    .disabled(workspace.settings.blur <= 0)
+                SliderRow(title: "四角暗化", value: $workspace.settings.darkness, range: 0...0.8, displayMultiplier: 100, suffix: "%")
                 SliderRow(title: "饱和度", value: $workspace.settings.saturation, range: 0...1.6, displayMultiplier: 100, suffix: "%")
+                ColorPicker("背景色彩遮罩", selection: backgroundOverlayColor, supportsOpacity: false)
+                SliderRow(title: "遮罩强度", value: $workspace.settings.backgroundOverlayOpacity, range: 0...0.6, displayMultiplier: 100, suffix: "%")
+                Text("默认完全透明。只有需要统一画面色调时再选择颜色并提高透明度。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Picker("背景生命模式", selection: $workspace.settings.backgroundMotionStyle) {
                     ForEach(BackgroundMotionStyle.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                Group {
-                    SliderRow(title: "背景生命力", value: $workspace.settings.backgroundLife, range: 0...1, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "镜头呼吸", value: $workspace.settings.backgroundCameraMotion, range: 0...1, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "音频形变", value: $workspace.settings.backgroundAudioWarp, range: 0...1, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "空间视差", value: $workspace.settings.backgroundParallax, range: 0...1, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "光流强度", value: $workspace.settings.backgroundLightFlow, range: 0...1, displayMultiplier: 100, suffix: "%")
-                    SliderRow(title: "智能主体保护", value: $workspace.settings.backgroundSubjectProtection, range: 0...1, displayMultiplier: 100, suffix: "%")
+                SliderRow(title: "背景动感", value: $workspace.settings.backgroundLife, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    .disabled(workspace.settings.backgroundMotionStyle == .off)
+                DisclosureGroup("高级背景设置") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SliderRow(title: "镜头呼吸", value: $workspace.settings.backgroundCameraMotion, range: 0...1, displayMultiplier: 100, suffix: "%")
+                        SliderRow(title: "音频形变", value: $workspace.settings.backgroundAudioWarp, range: 0...1, displayMultiplier: 100, suffix: "%")
+                        SliderRow(title: "空间视差", value: $workspace.settings.backgroundParallax, range: 0...1, displayMultiplier: 100, suffix: "%")
+                        SliderRow(title: "光流强度", value: $workspace.settings.backgroundLightFlow, range: 0...1, displayMultiplier: 100, suffix: "%")
+                        SliderRow(title: "智能主体保护", value: $workspace.settings.backgroundSubjectProtection, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    }
                 }
                 .disabled(workspace.settings.backgroundMotionStyle == .off)
-                Text("Vision 会在本机识别人脸和显著主体并缓存保护遮罩；静态图片随音乐产生 2.5D 运镜、局部涟漪与光流。")
+                Text("静态图片会使用本机 Vision 识别主体：主体保持清晰，环境按模糊强度柔化；暗化只作用于边缘与四角。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -766,6 +787,26 @@ struct SettingsPanel: View {
         duration >= 10 ? String(format: "%.0f 秒", duration) : String(format: "%.1f 秒", duration)
     }
 
+    private var backgroundOverlayColor: Binding<Color> {
+        Binding(
+            get: {
+                Color(
+                    red: workspace.settings.backgroundOverlayRed,
+                    green: workspace.settings.backgroundOverlayGreen,
+                    blue: workspace.settings.backgroundOverlayBlue
+                )
+            },
+            set: { color in
+                guard let converted = NSColor(color).usingColorSpace(.deviceRGB) else { return }
+                var updated = workspace.settings
+                updated.backgroundOverlayRed = converted.redComponent
+                updated.backgroundOverlayGreen = converted.greenComponent
+                updated.backgroundOverlayBlue = converted.blueComponent
+                workspace.settings = updated
+            }
+        )
+    }
+
     private var visualizerSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("音频可视化", systemImage: "waveform.path.ecg").font(.headline)
@@ -790,17 +831,19 @@ struct SettingsPanel: View {
             SliderRow(title: "垂直位置", value: $workspace.settings.visualizerPositionY, range: 0.12...0.72, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "整体大小", value: $workspace.settings.visualizerScale, range: 0.6...1.5, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "光晕", value: $workspace.settings.visualizerGlow, range: 0...1, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "平滑", value: $workspace.settings.visualizerSmoothing, range: 0...1, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "密度", value: $workspace.settings.visualizerDensity, range: 0...1, displayMultiplier: 100, suffix: "%")
-            Divider()
-            Text("统一后期").font(.caption.weight(.semibold))
-            SliderRow(title: "炫丽度", value: $workspace.settings.visualizerBrilliance, range: 0...1, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "背景融合", value: $workspace.settings.visualizerIntegration, range: 0...1, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "拖尾长度", value: $workspace.settings.visualizerTrail, range: 0...0.85, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "色彩丰富度", value: $workspace.settings.visualizerColorRichness, range: 0...1, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "空间深度", value: $workspace.settings.visualizerDepth, range: 0...1, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "节拍冲击", value: $workspace.settings.visualizerBeatImpact, range: 0...1, displayMultiplier: 100, suffix: "%")
-            Text("统一作用于背景折射、Bloom、色散、残影和调色，不会降低歌词清晰度。")
+            DisclosureGroup("高级视觉设置") {
+                VStack(alignment: .leading, spacing: 10) {
+                    SliderRow(title: "平滑", value: $workspace.settings.visualizerSmoothing, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "密度", value: $workspace.settings.visualizerDensity, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "炫丽度", value: $workspace.settings.visualizerBrilliance, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "背景融合", value: $workspace.settings.visualizerIntegration, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "拖尾长度", value: $workspace.settings.visualizerTrail, range: 0...0.85, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "色彩丰富度", value: $workspace.settings.visualizerColorRichness, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "空间深度", value: $workspace.settings.visualizerDepth, range: 0...1, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "节拍冲击", value: $workspace.settings.visualizerBeatImpact, range: 0...1, displayMultiplier: 100, suffix: "%")
+                }
+            }
+            Text("通常只需调整响应、位置、大小和光晕；其余参数可保持模板推荐值。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -854,11 +897,15 @@ struct SettingsPanel: View {
             .pickerStyle(.segmented)
             SliderRow(title: "字体大小", value: $workspace.settings.lyricSize, range: 24...76, suffix: " pt")
             SliderRow(title: "垂直位置", value: $workspace.settings.lyricPositionY, range: 0.28...0.82, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "文字宽度", value: $workspace.settings.lyricWidth, range: 0.5...0.94, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "行间距", value: $workspace.settings.lyricLineSpacing, range: 1.2...2.5, precision: 1)
-            SliderRow(title: "次要歌词透明度", value: $workspace.settings.lyricInactiveOpacity, range: 0.08...0.72, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "文字光晕", value: $workspace.settings.lyricGlow, range: 0...1, displayMultiplier: 100, suffix: "%")
-            SliderRow(title: "动画时长", value: $workspace.settings.lyricAnimationDuration, range: 0.12...1.2, precision: 1, suffix: " s")
+            DisclosureGroup("高级歌词设置") {
+                VStack(alignment: .leading, spacing: 10) {
+                    SliderRow(title: "文字宽度", value: $workspace.settings.lyricWidth, range: 0.5...0.94, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "行间距", value: $workspace.settings.lyricLineSpacing, range: 1.2...2.5, precision: 1)
+                    SliderRow(title: "次要歌词透明度", value: $workspace.settings.lyricInactiveOpacity, range: 0.08...0.72, displayMultiplier: 100, suffix: "%")
+                    SliderRow(title: "动画时长", value: $workspace.settings.lyricAnimationDuration, range: 0.12...1.2, precision: 1, suffix: " s")
+                }
+            }
             Label("智能对比度会根据歌词区域的背景亮度，自动增强轮廓、阴影和柔和底衬。", systemImage: "wand.and.stars")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -895,9 +942,13 @@ struct SettingsPanel: View {
                 Picker("片头动画", selection: $workspace.settings.introAnimationStyle) {
                     ForEach(IntroAnimationStyle.allCases) { Text($0.rawValue).tag($0) }
                 }
-                SliderRow(title: "标题大小", value: $workspace.settings.introTitleSize, range: 36...86, suffix: " pt")
                 SliderRow(title: "显示时长", value: $workspace.settings.introDuration, range: 3...12, precision: 1, suffix: " s")
-                SliderRow(title: "淡入淡出", value: $workspace.settings.introAnimationDuration, range: 0.35...2.2, precision: 1, suffix: " s")
+                DisclosureGroup("高级片头设置") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SliderRow(title: "标题大小", value: $workspace.settings.introTitleSize, range: 36...86, suffix: " pt")
+                        SliderRow(title: "淡入淡出", value: $workspace.settings.introAnimationDuration, range: 0.35...2.2, precision: 1, suffix: " s")
+                    }
+                }
                 Text(workspace.settings.aspectRatio == .landscape ? "横屏自动放在左上角。" : "竖屏与方形画面自动在顶部居中。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)

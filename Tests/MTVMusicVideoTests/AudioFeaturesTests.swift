@@ -37,6 +37,11 @@ final class AudioFeaturesTests: XCTestCase {
         settings.musicAwareness = 0.73
         settings.backgroundMotionStyle = .liquid
         settings.backgroundLife = 0.77
+        settings.smartBlurEnabled = false
+        settings.backgroundOverlayRed = 0.18
+        settings.backgroundOverlayGreen = 0.42
+        settings.backgroundOverlayBlue = 0.76
+        settings.backgroundOverlayOpacity = 0.23
         settings.introEnabled = true
         settings.songTitle = "心无挂碍"
         settings.authorName = "鹿鸣松(Lumisum)"
@@ -59,6 +64,10 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.musicAwareness, RenderSettings().musicAwareness)
         XCTAssertEqual(settings.backgroundMotionStyle, RenderSettings().backgroundMotionStyle)
         XCTAssertEqual(settings.backgroundLife, RenderSettings().backgroundLife)
+        XCTAssertEqual(settings.backgroundOverlayOpacity, 0)
+        XCTAssertTrue(settings.smartBlurEnabled)
+        XCTAssertEqual(settings.introDuration, 12)
+        XCTAssertEqual(settings.introTitleSize, 72)
         XCTAssertTrue(settings.introEnabled)
         XCTAssertEqual(settings.authorName, "鹿鸣松(Lumisum)")
         XCTAssertTrue(settings.introShowsDate)

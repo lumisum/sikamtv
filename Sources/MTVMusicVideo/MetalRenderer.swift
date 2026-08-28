@@ -213,7 +213,7 @@ final class MetalRenderer {
                 GPUVertex(position: SIMD2(0, 0), uv: SIMD2(0, 0), color: accentWash),
                 GPUVertex(position: SIMD2(Float(size.width), Float(size.height)), uv: SIMD2(1, 1), color: accentWash),
                 GPUVertex(position: SIMD2(0, Float(size.height)), uv: SIMD2(0, 1), color: accentWash)
-            ], pipeline: radialPipeline, encoder: encoder)
+            ], pipeline: colorPipeline, encoder: encoder)
         }
         if !mesh.soft.isEmpty {
             draw(mesh.soft, pipeline: colorPipeline, encoder: encoder)

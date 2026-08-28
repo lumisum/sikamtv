@@ -202,11 +202,11 @@ enum VisualTemplate: String, CaseIterable, Identifiable, Codable, Sendable {
     var title: String { rawValue }
     var subtitle: String {
         switch self {
-        case .zen: return "碧金水波 · 节拍光晕"
-        case .ethereal: return "紫粉极光 · 空灵帷幕"
-        case .minimal: return "冷银波形 · 克制留白"
-        case .cinema: return "琥珀棱镜 · 电影字幕"
-        case .electronic: return "青洋红频谱 · 强节奏"
+        case .zen: return "柔和水波 · 克制光晕"
+        case .ethereal: return "空灵帷幕 · 轻盈流动"
+        case .minimal: return "细线波形 · 克制留白"
+        case .cinema: return "棱镜纵深 · 电影字幕"
+        case .electronic: return "动态频谱 · 强节奏"
         }
     }
     var defaultVisualizer: VisualizerKind {
@@ -343,18 +343,23 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var aspectRatio: AspectRatio = .portrait
     var template: VisualTemplate = .ethereal
     var visualizer: VisualizerKind = .aurora
-    var blur: Double = 18
-    var darkness: Double = 0.34
-    var saturation: Double = 1.16
+    var blur: Double = 12
+    var smartBlurEnabled: Bool = true
+    var darkness: Double = 0.20
+    var saturation: Double = 1.0
+    var backgroundOverlayRed: Double = 1.0
+    var backgroundOverlayGreen: Double = 1.0
+    var backgroundOverlayBlue: Double = 1.0
+    var backgroundOverlayOpacity: Double = 0
     var backgroundTransition: BackgroundTransition = .crossfade
     var backgroundTransitionDuration: Double = 1.35
-    var backgroundMotionStyle: BackgroundMotionStyle = .immersive
-    var backgroundLife: Double = 0.82
-    var backgroundCameraMotion: Double = 0.62
-    var backgroundAudioWarp: Double = 0.58
-    var backgroundParallax: Double = 0.52
-    var backgroundLightFlow: Double = 0.68
-    var backgroundSubjectProtection: Double = 0.72
+    var backgroundMotionStyle: BackgroundMotionStyle = .natural
+    var backgroundLife: Double = 0.42
+    var backgroundCameraMotion: Double = 0.34
+    var backgroundAudioWarp: Double = 0.14
+    var backgroundParallax: Double = 0.22
+    var backgroundLightFlow: Double = 0.12
+    var backgroundSubjectProtection: Double = 0.82
 
     var visualizerStrength: Double = 0.86
     var visualizerPositionY: Double = 0.31
@@ -362,13 +367,13 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var visualizerGlow: Double = 0.96
     var visualizerSmoothing: Double = 0.72
     var visualizerDensity: Double = 0.86
-    var visualizerBrilliance: Double = 0.88
-    var visualizerIntegration: Double = 0.78
-    var visualizerTrail: Double = 0.42
-    var visualizerColorRichness: Double = 0.92
-    var visualizerDepth: Double = 0.74
-    var visualizerBeatImpact: Double = 0.76
-    var musicAwareness: Double = 0.92
+    var visualizerBrilliance: Double = 0.72
+    var visualizerIntegration: Double = 0.62
+    var visualizerTrail: Double = 0.28
+    var visualizerColorRichness: Double = 0.72
+    var visualizerDepth: Double = 0.56
+    var visualizerBeatImpact: Double = 0.55
+    var musicAwareness: Double = 0.88
 
     var lyricSize: Double = 42
     var lyricPositionY: Double = 0.60
@@ -385,15 +390,16 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var songTitle: String = ""
     var authorName: String = "鹿鸣松(Lumisum)"
     var introShowsDate: Bool = true
-    var introDuration: Double = 6.5
+    var introDuration: Double = 12
     var introAnimationDuration: Double = 1.15
-    var introTitleSize: Double = 58
+    var introTitleSize: Double = 72
     var introAnimationStyle: IntroAnimationStyle = .luminousRise
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case aspectRatio, template, visualizer, blur, darkness, saturation
+        case aspectRatio, template, visualizer, blur, smartBlurEnabled, darkness, saturation
+        case backgroundOverlayRed, backgroundOverlayGreen, backgroundOverlayBlue, backgroundOverlayOpacity
         case backgroundTransition, backgroundTransitionDuration, backgroundMotionStyle
         case backgroundLife, backgroundCameraMotion, backgroundAudioWarp, backgroundParallax, backgroundLightFlow, backgroundSubjectProtection
         case visualizerStrength, visualizerPositionY, visualizerScale, visualizerGlow, visualizerSmoothing, visualizerDensity
@@ -410,8 +416,13 @@ struct RenderSettings: Codable, Equatable, Sendable {
         template = try container.decodeIfPresent(VisualTemplate.self, forKey: .template) ?? defaults.template
         visualizer = try container.decodeIfPresent(VisualizerKind.self, forKey: .visualizer) ?? defaults.visualizer
         blur = try container.decodeIfPresent(Double.self, forKey: .blur) ?? defaults.blur
+        smartBlurEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartBlurEnabled) ?? defaults.smartBlurEnabled
         darkness = try container.decodeIfPresent(Double.self, forKey: .darkness) ?? defaults.darkness
         saturation = try container.decodeIfPresent(Double.self, forKey: .saturation) ?? defaults.saturation
+        backgroundOverlayRed = try container.decodeIfPresent(Double.self, forKey: .backgroundOverlayRed) ?? defaults.backgroundOverlayRed
+        backgroundOverlayGreen = try container.decodeIfPresent(Double.self, forKey: .backgroundOverlayGreen) ?? defaults.backgroundOverlayGreen
+        backgroundOverlayBlue = try container.decodeIfPresent(Double.self, forKey: .backgroundOverlayBlue) ?? defaults.backgroundOverlayBlue
+        backgroundOverlayOpacity = try container.decodeIfPresent(Double.self, forKey: .backgroundOverlayOpacity) ?? defaults.backgroundOverlayOpacity
         backgroundTransition = try container.decodeIfPresent(BackgroundTransition.self, forKey: .backgroundTransition) ?? defaults.backgroundTransition
         backgroundTransitionDuration = try container.decodeIfPresent(Double.self, forKey: .backgroundTransitionDuration) ?? defaults.backgroundTransitionDuration
         backgroundMotionStyle = try container.decodeIfPresent(BackgroundMotionStyle.self, forKey: .backgroundMotionStyle) ?? defaults.backgroundMotionStyle
@@ -460,8 +471,13 @@ struct RenderSettings: Codable, Equatable, Sendable {
         try container.encode(template, forKey: .template)
         try container.encode(visualizer, forKey: .visualizer)
         try container.encode(blur, forKey: .blur)
+        try container.encode(smartBlurEnabled, forKey: .smartBlurEnabled)
         try container.encode(darkness, forKey: .darkness)
         try container.encode(saturation, forKey: .saturation)
+        try container.encode(backgroundOverlayRed, forKey: .backgroundOverlayRed)
+        try container.encode(backgroundOverlayGreen, forKey: .backgroundOverlayGreen)
+        try container.encode(backgroundOverlayBlue, forKey: .backgroundOverlayBlue)
+        try container.encode(backgroundOverlayOpacity, forKey: .backgroundOverlayOpacity)
         try container.encode(backgroundTransition, forKey: .backgroundTransition)
         try container.encode(backgroundTransitionDuration, forKey: .backgroundTransitionDuration)
         try container.encode(backgroundMotionStyle, forKey: .backgroundMotionStyle)

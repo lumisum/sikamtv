@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CoreImage
 import CoreVideo
 import XCTest
 @testable import MTVMusicVideo
@@ -9,17 +10,74 @@ final class RenderEngineTests: XCTestCase {
         let settings = RenderSettings()
         XCTAssertEqual(settings.template, .ethereal)
         XCTAssertEqual(settings.visualizer, .aurora)
-        XCTAssertGreaterThanOrEqual(settings.saturation, 1.10)
+        XCTAssertEqual(settings.saturation, 1.0)
+        XCTAssertEqual(settings.backgroundOverlayOpacity, 0)
         XCTAssertGreaterThanOrEqual(settings.visualizerGlow, 0.90)
         XCTAssertGreaterThanOrEqual(settings.visualizerDensity, 0.80)
-        XCTAssertGreaterThanOrEqual(settings.visualizerBrilliance, 0.80)
-        XCTAssertGreaterThanOrEqual(settings.visualizerIntegration, 0.70)
-        XCTAssertGreaterThanOrEqual(settings.visualizerColorRichness, 0.80)
-        XCTAssertEqual(settings.backgroundMotionStyle, .immersive)
-        XCTAssertGreaterThanOrEqual(settings.backgroundLife, 0.80)
+        XCTAssertGreaterThanOrEqual(settings.visualizerBrilliance, 0.70)
+        XCTAssertGreaterThanOrEqual(settings.visualizerIntegration, 0.60)
+        XCTAssertGreaterThanOrEqual(settings.visualizerColorRichness, 0.70)
+        XCTAssertEqual(settings.backgroundMotionStyle, .natural)
+        XCTAssertLessThanOrEqual(settings.backgroundLife, 0.45)
+        XCTAssertLessThanOrEqual(settings.backgroundAudioWarp, 0.15)
+        XCTAssertLessThanOrEqual(settings.backgroundLightFlow, 0.15)
         XCTAssertGreaterThanOrEqual(settings.lyricGlow, 0.80)
         XCTAssertEqual(settings.lyricAnimation, .bloom)
         XCTAssertGreaterThanOrEqual(settings.backgroundTransitionDuration, 1.0)
+        XCTAssertEqual(settings.introDuration, 12)
+        XCTAssertEqual(settings.introTitleSize, 72)
+    }
+
+    func testTemplatesDoNotTintTheBackgroundUnlessOverlayIsEnabled() throws {
+        let background = try XCTUnwrap(makeSolidBackground(gray: 0.38, width: 480, height: 270))
+        let engine = RenderEngine()
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.blur = 0
+        settings.darkness = 0
+        settings.saturation = 1
+        settings.backgroundMotionStyle = .off
+        settings.visualizerStrength = 0
+        settings.visualizerGlow = 0
+        settings.visualizerBrilliance = 0
+        settings.visualizerIntegration = 0
+        settings.visualizerColorRichness = 0
+        settings.songTitle = ""
+        settings.backgroundOverlayOpacity = 0
+        let size = CGSize(width: 320, height: 180)
+
+        settings.template = .zen
+        let zen = try XCTUnwrap(engine.render(size: size, time: 1, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "neutral-overlay", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        settings.template = .ethereal
+        let ethereal = try XCTUnwrap(engine.render(size: size, time: 1, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "neutral-overlay", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        XCTAssertLessThan(sparseAverageColorDifference(zen, ethereal), 0.001, "Changing templates must not add a hidden color cast")
+
+        settings.backgroundOverlayRed = 0.12
+        settings.backgroundOverlayGreen = 0.32
+        settings.backgroundOverlayBlue = 0.88
+        settings.backgroundOverlayOpacity = 0.25
+        let tinted = try XCTUnwrap(engine.render(size: size, time: 1, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "neutral-overlay", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        XCTAssertGreaterThan(sparseAverageColorDifference(ethereal, tinted), 0.025, "The manual overlay should visibly respond when enabled")
+    }
+
+    func testBrightBackgroundHighlightProtectionAvoidsClipping() throws {
+        let background = try XCTUnwrap(makeSolidBackground(gray: 0.98, width: 480, height: 270))
+        let engine = RenderEngine()
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.blur = 0
+        settings.darkness = 0
+        settings.saturation = 1
+        settings.backgroundMotionStyle = .off
+        settings.visualizerStrength = 0
+        settings.visualizerGlow = 0
+        settings.visualizerBrilliance = 1
+        settings.visualizerIntegration = 0
+        settings.songTitle = ""
+        let image = try XCTUnwrap(engine.render(size: CGSize(width: 320, height: 180), time: 1, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "sunlight-protection", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        let center = sample(image, xRatio: 0.5, yRatio: 0.5)
+        XCTAssertLessThan(max(center.red, center.green, center.blue), 0.97, "Bright highlights should retain headroom instead of clipping")
+        XCTAssertGreaterThan(min(center.red, center.green, center.blue), 0.72, "Highlight protection should remain natural, not muddy")
     }
 
     func testStaticBackgroundKeepsMovingWithoutAudio() throws {
@@ -365,6 +423,48 @@ final class RenderEngineTests: XCTestCase {
         XCTAssertGreaterThan(bottom.blue - bottom.red, 0.35, "Background was washed out or missing at the bottom: \(bottom)")
     }
 
+    func testDarknessCreatesCornerVignetteInsteadOfDimmingTheWholeImage() throws {
+        let background = try XCTUnwrap(makeSolidBackground(gray: 0.62, width: 480, height: 270))
+        let engine = RenderEngine()
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.blur = 0
+        settings.darkness = 0
+        settings.saturation = 1
+        settings.backgroundMotionStyle = .off
+        settings.visualizerStrength = 0
+        settings.visualizerGlow = 0
+        settings.visualizerBrilliance = 0
+        settings.visualizerIntegration = 0
+        settings.songTitle = ""
+        let size = CGSize(width: 320, height: 180)
+        let baseline = try XCTUnwrap(engine.render(size: size, time: 1, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "vignette-test", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        settings.darkness = 0.70
+        let vignette = try XCTUnwrap(engine.render(size: size, time: 1, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "vignette-test", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        let baselineCenter = sample(baseline, xRatio: 0.5, yRatio: 0.5)
+        let vignetteCenter = sample(vignette, xRatio: 0.5, yRatio: 0.5)
+        let baselineCorner = sample(baseline, xRatio: 0.03, yRatio: 0.03)
+        let vignetteCorner = sample(vignette, xRatio: 0.03, yRatio: 0.03)
+        XCTAssertLessThan(abs(baselineCenter.red - vignetteCenter.red), 0.035, "The center should remain open and luminous")
+        XCTAssertGreaterThan(baselineCorner.red - vignetteCorner.red, 0.22, "Darkness should concentrate at the corners")
+    }
+
+    func testVisionMaskKeepsTheSubjectSharpWhileTheEnvironmentStaysBlurred() throws {
+        let source = try XCTUnwrap(makeSplitBackground(width: 256, height: 256))
+        let mask = try XCTUnwrap(makeCenterProtectionMask(width: 256, height: 256))
+        let sharp = CIImage(cgImage: source)
+        let blurred = sharp
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 18])
+            .cropped(to: sharp.extent)
+        let composite = RenderEngine.smartBlurComposite(sharp: sharp, blurred: blurred, mask: mask)
+        let context = CIContext(options: [.cacheIntermediates: false])
+        let output = try XCTUnwrap(context.createCGImage(composite, from: sharp.extent))
+        let center = sample(output, xRatio: 0.49, yRatio: 0.50)
+        let environment = sample(output, xRatio: 0.49, yRatio: 0.10)
+        XCTAssertLessThan(center.red, 0.12, "The protected central subject should retain its sharp edge")
+        XCTAssertGreaterThan(environment.red, center.red + 0.18, "The same edge outside the subject mask should remain softly blurred")
+    }
+
     func testPreviewAndExportKeepBackgroundAndLyricsUpright() throws {
         let background = try XCTUnwrap(makeBandedBackground(width: 640, height: 360))
         let engine = RenderEngine()
@@ -476,6 +576,40 @@ final class RenderEngineTests: XCTestCase {
         ) else { return nil }
         context.setFillColor(CGColor(gray: gray, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
+    private func makeSplitBackground(width: Int, height: Int) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
+        return context.makeImage()
+    }
+
+    private func makeCenterProtectionMask(width: Int, height: Int) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return nil }
+        context.setFillColor(gray: 0, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: width / 4, y: height / 4, width: width / 2, height: height / 2))
         return context.makeImage()
     }
 

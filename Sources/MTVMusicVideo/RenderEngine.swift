@@ -10,6 +10,7 @@ final class RenderEngine {
     private struct BackgroundCacheKey: Hashable {
         let identifier: String
         let blur: Int
+        let smartBlur: Bool
         let saturation: Int
         let width: Int
         let height: Int
@@ -258,10 +259,13 @@ final class RenderEngine {
             template: settings.template,
             staticBackground: background != nil && backgroundDuration <= 0
         )
-        let accent = VisualPalette.rgba(settings.template.palette.accent)
-        let musicalArc = Double(directedFeatures.energy) * 0.45 + Double(directedFeatures.buildup) * 0.22 + Double(directedFeatures.climax) * 0.33
-        let breath = 0.88 + sin(time * (0.20 + musicalArc * 0.10)) * 0.06 + Double(directedFeatures.loudness) * 0.06 + musicalArc * 0.12
-        let washAlpha = Float((settings.template == .minimal ? 0.022 : 0.048) * breath)
+        let overlayAlpha = Float(min(1, max(0, settings.backgroundOverlayOpacity)))
+        let overlay = SIMD4<Float>(
+            Float(min(1, max(0, settings.backgroundOverlayRed))) * overlayAlpha,
+            Float(min(1, max(0, settings.backgroundOverlayGreen))) * overlayAlpha,
+            Float(min(1, max(0, settings.backgroundOverlayBlue))) * overlayAlpha,
+            overlayAlpha
+        )
         let lyricsLayer: MetalRenderer.TextureLayer?
         if LRCParser.currentIndex(at: time, in: lyrics) != nil {
             let lyricContrast = makeLyricContrastProfile(
@@ -322,9 +326,9 @@ final class RenderEngine {
         return PreparedFrame(
             backgrounds: layers,
             placeholder: placeholder,
-            darkness: Float(settings.darkness),
-            vignetteAlpha: settings.template == .cinema ? 0.70 : 0.50,
-            accentWash: SIMD4(Float(accent.0), Float(accent.1), Float(accent.2), washAlpha),
+            darkness: 0,
+            vignetteAlpha: Float(min(0.85, settings.darkness * (settings.template == .cinema ? 1.18 : 1.0))),
+            accentWash: overlay,
             mesh: mesh,
             title: titleLayer,
             lyrics: lyricsLayer,
@@ -379,17 +383,17 @@ final class RenderEngine {
 
     private func filteredBackground(_ image: CGImage, identifier: String?, mediaDuration: Double, targetSize: CGSize, settings: RenderSettings) -> MTLTexture? {
         if mediaDuration <= 0, let identifier {
-            let key = BackgroundCacheKey(identifier: identifier, blur: Int(settings.blur * 10), saturation: Int(settings.saturation * 100), width: Int(targetSize.width), height: Int(targetSize.height))
+            let key = BackgroundCacheKey(identifier: identifier, blur: Int(settings.blur * 10), smartBlur: settings.smartBlurEnabled, saturation: Int(settings.saturation * 100), width: Int(targetSize.width), height: Int(targetSize.height))
             if let cached = backgroundCache[key] { return cached }
-            guard let texture = makeFilteredTexture(image, targetSize: targetSize, settings: settings) else { return nil }
+            guard let texture = makeFilteredTexture(image, identifier: identifier, isStatic: true, targetSize: targetSize, settings: settings) else { return nil }
             if backgroundCache.count > 24 { backgroundCache.removeAll(keepingCapacity: true) }
             backgroundCache[key] = texture
             return texture
         }
-        return makeFilteredTexture(image, targetSize: targetSize, settings: settings)
+        return makeFilteredTexture(image, identifier: identifier, isStatic: false, targetSize: targetSize, settings: settings)
     }
 
-    private func makeFilteredTexture(_ image: CGImage, targetSize: CGSize, settings: RenderSettings) -> MTLTexture? {
+    private func makeFilteredTexture(_ image: CGImage, identifier: String?, isStatic: Bool, targetSize: CGSize, settings: RenderSettings) -> MTLTexture? {
         var ciImage = CIImage(cgImage: image)
         let sourceSize = CGSize(width: image.width, height: image.height)
         let downsampleScale = min(1, max(targetSize.width / max(1, sourceSize.width), targetSize.height / max(1, sourceSize.height)) * 1.06)
@@ -402,9 +406,17 @@ final class RenderEngine {
             ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: blurWorkingScale, y: blurWorkingScale))
         }
         if settings.blur > 0, let filter = blurFilter {
-            filter.setValue(ciImage, forKey: kCIInputImageKey)
+            let sharpImage = ciImage
+            filter.setValue(sharpImage, forKey: kCIInputImageKey)
             filter.setValue(settings.blur * renderScale * blurWorkingScale, forKey: kCIInputRadiusKey)
-            ciImage = filter.outputImage?.cropped(to: ciImage.extent) ?? ciImage
+            let blurredImage = filter.outputImage?.cropped(to: sharpImage.extent) ?? sharpImage
+            if settings.smartBlurEnabled,
+               isStatic,
+               let mask = VisionSubjectMaskCache.shared.mask(for: identifier, image: image) {
+                ciImage = Self.smartBlurComposite(sharp: sharpImage, blurred: blurredImage, mask: mask)
+            } else {
+                ciImage = blurredImage
+            }
         }
         if let color = colorFilter {
             color.setValue(ciImage, forKey: kCIInputImageKey)
@@ -419,6 +431,22 @@ final class RenderEngine {
         guard let texture = metal.makeTexture(width: width, height: height) else { return nil }
         metal.renderCIImage(ciImage.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)), to: texture)
         return texture
+    }
+
+    static func smartBlurComposite(sharp: CIImage, blurred: CIImage, mask: CGImage) -> CIImage {
+        let maskImage = CIImage(cgImage: mask)
+        let scaleX = sharp.extent.width / max(1, maskImage.extent.width)
+        let scaleY = sharp.extent.height / max(1, maskImage.extent.height)
+        let fittedMask = maskImage
+            .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+            .transformed(by: CGAffineTransform(translationX: sharp.extent.minX, y: sharp.extent.minY))
+            .cropped(to: sharp.extent)
+        return sharp
+            .applyingFilter("CIBlendWithMask", parameters: [
+                kCIInputBackgroundImageKey: blurred,
+                kCIInputMaskImageKey: fittedMask
+            ])
+            .cropped(to: sharp.extent)
     }
 
     private func makeLyricContrastProfile(
@@ -446,7 +474,7 @@ final class RenderEngine {
             sample = sample.mixed(with: next, amount: CGFloat(transitionProgress))
         }
 
-        let effectiveLuminance = sample.average * CGFloat(max(0, 1 - settings.darkness))
+        let effectiveLuminance = sample.average * CGFloat(max(0, 1 - settings.darkness * 0.16))
         let brightness = smoothstep(0.26, 0.76, effectiveLuminance)
         let complexity = min(1, sample.complexity * max(0.5, 1 - CGFloat(settings.blur) / 72))
         let risk = min(1, brightness * 0.70 + complexity * 0.22 + sample.brightFraction * 0.22)
