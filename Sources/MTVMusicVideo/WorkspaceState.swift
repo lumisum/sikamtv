@@ -80,6 +80,7 @@ final class WorkspaceState: ObservableObject {
     }
 
     var duration: Double { audioAnalysis?.duration ?? audioDuration }
+    var generationDateString: String { Self.dateFormatter.string(from: Date()) }
     var hasRequiredMedia: Bool { !backgrounds.isEmpty && audioURL != nil && !lyrics.isEmpty && audioAnalysis != nil }
     var backgroundSummary: String? {
         guard !backgrounds.isEmpty else { return nil }
@@ -130,8 +131,17 @@ final class WorkspaceState: ObservableObject {
         loadAudio(url: url)
     }
 
+    func useAudioFilenameAsTitle() {
+        guard let audioURL else { return }
+        settings.songTitle = audioURL.deletingPathExtension().lastPathComponent
+    }
+
     private func loadAudio(url: URL) {
         audioAnalysisTask?.cancel()
+        let previousAutomaticTitle = audioURL?.deletingPathExtension().lastPathComponent
+        if settings.songTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || settings.songTitle == previousAutomaticTitle {
+            settings.songTitle = url.deletingPathExtension().lastPathComponent
+        }
         audioURL = url
         audioAnalysis = nil
         audioDuration = audioFileDuration(for: url)
@@ -592,4 +602,12 @@ final class WorkspaceState: ObservableObject {
     private func persistSettings() {
         if let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: "SikaMTV.RenderSettings") }
     }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 }

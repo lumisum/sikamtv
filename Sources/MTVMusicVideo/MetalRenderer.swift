@@ -134,6 +134,7 @@ final class MetalRenderer {
         vignetteAlpha: Float,
         accentWash: SIMD4<Float>,
         mesh: VisualizerMesh,
+        title: TextureLayer?,
         lyrics: TextureLayer?,
         backgroundMotion: BackgroundMotionSettings,
         postProcess: PostProcessSettings
@@ -154,6 +155,7 @@ final class MetalRenderer {
                 + mesh.radials.count
                 + mesh.additive.count
                 + 6
+                + (title == nil ? 0 : 6)
                 + (lyrics == nil ? 0 : 6)
         )
         if !historyValid {
@@ -254,15 +256,16 @@ final class MetalRenderer {
             blit.endEncoding()
         }
 
-        if let lyrics {
-            let lyricsPass = MTLRenderPassDescriptor()
-            lyricsPass.colorAttachments[0].texture = texture
-            lyricsPass.colorAttachments[0].loadAction = .load
-            lyricsPass.colorAttachments[0].storeAction = .store
-            if let lyricsEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: lyricsPass) {
-                lyricsEncoder.setVertexBytes(&uniforms, length: MemoryLayout<GPUUniforms>.stride, index: 1)
-                drawTexturedQuad(lyrics, encoder: lyricsEncoder)
-                lyricsEncoder.endEncoding()
+        if title != nil || lyrics != nil {
+            let overlayPass = MTLRenderPassDescriptor()
+            overlayPass.colorAttachments[0].texture = texture
+            overlayPass.colorAttachments[0].loadAction = .load
+            overlayPass.colorAttachments[0].storeAction = .store
+            if let overlayEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: overlayPass) {
+                overlayEncoder.setVertexBytes(&uniforms, length: MemoryLayout<GPUUniforms>.stride, index: 1)
+                if let title { drawTexturedQuad(title, encoder: overlayEncoder) }
+                if let lyrics { drawTexturedQuad(lyrics, encoder: overlayEncoder) }
+                overlayEncoder.endEncoding()
             }
         }
         commandBuffer.commit()
@@ -271,7 +274,7 @@ final class MetalRenderer {
         lastPostTime = postProcess.time
     }
 
-    func renderToPixelBuffer(_ pixelBuffer: CVPixelBuffer, size: CGSize, backgrounds: [TextureLayer], placeholder: [GPUVertex], darkness: Float, vignetteAlpha: Float, accentWash: SIMD4<Float>, mesh: VisualizerMesh, lyrics: TextureLayer?, backgroundMotion: BackgroundMotionSettings, postProcess: PostProcessSettings) -> Bool {
+    func renderToPixelBuffer(_ pixelBuffer: CVPixelBuffer, size: CGSize, backgrounds: [TextureLayer], placeholder: [GPUVertex], darkness: Float, vignetteAlpha: Float, accentWash: SIMD4<Float>, mesh: VisualizerMesh, title: TextureLayer?, lyrics: TextureLayer?, backgroundMotion: BackgroundMotionSettings, postProcess: PostProcessSettings) -> Bool {
         guard let texture = makeTextureFromPixelBuffer(pixelBuffer) else { return false }
         render(
             to: texture,
@@ -282,6 +285,7 @@ final class MetalRenderer {
             vignetteAlpha: vignetteAlpha,
             accentWash: accentWash,
             mesh: mesh,
+            title: title,
             lyrics: lyrics,
             backgroundMotion: backgroundMotion,
             postProcess: postProcess

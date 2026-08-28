@@ -603,6 +603,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case canvas = "画面"
     case visualizer = "视觉"
     case lyrics = "歌词"
+    case intro = "片头"
 
     var id: String { rawValue }
 }
@@ -647,6 +648,7 @@ struct SettingsPanel: View {
         case .canvas: canvasSettings
         case .visualizer: visualizerSettings
         case .lyrics: lyricSettings
+        case .intro: introSettings
         }
     }
 
@@ -861,6 +863,46 @@ struct SettingsPanel: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var introSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("片头信息", systemImage: "text.badge.star").font(.headline)
+                Spacer()
+                Toggle("启用", isOn: $workspace.settings.introEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+            Group {
+                Text("歌名").font(.caption.weight(.semibold))
+                TextField("请输入歌名", text: $workspace.settings.songTitle)
+                    .textFieldStyle(.roundedBorder)
+                if workspace.audioURL != nil {
+                    Button("使用音乐文件名") { workspace.useAudioFilenameAsTitle() }
+                        .font(.caption)
+                }
+                Text("作者").font(.caption.weight(.semibold))
+                TextField("请输入作者名", text: $workspace.settings.authorName)
+                    .textFieldStyle(.roundedBorder)
+                Toggle("显示生成日期", isOn: $workspace.settings.introShowsDate)
+                if workspace.settings.introShowsDate {
+                    LabeledContent("生成时间", value: workspace.generationDateString)
+                        .font(.caption)
+                }
+                Divider()
+                Picker("片头动画", selection: $workspace.settings.introAnimationStyle) {
+                    ForEach(IntroAnimationStyle.allCases) { Text($0.rawValue).tag($0) }
+                }
+                SliderRow(title: "标题大小", value: $workspace.settings.introTitleSize, range: 36...86, suffix: " pt")
+                SliderRow(title: "显示时长", value: $workspace.settings.introDuration, range: 3...12, precision: 1, suffix: " s")
+                SliderRow(title: "淡入淡出", value: $workspace.settings.introAnimationDuration, range: 0.35...2.2, precision: 1, suffix: " s")
+                Text(workspace.settings.aspectRatio == .landscape ? "横屏自动放在左上角。" : "竖屏与方形画面自动在顶部居中。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!workspace.settings.introEnabled)
         }
     }
 

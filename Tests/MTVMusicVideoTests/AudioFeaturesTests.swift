@@ -37,6 +37,14 @@ final class AudioFeaturesTests: XCTestCase {
         settings.musicAwareness = 0.73
         settings.backgroundMotionStyle = .liquid
         settings.backgroundLife = 0.77
+        settings.introEnabled = true
+        settings.songTitle = "心无挂碍"
+        settings.authorName = "鹿鸣松(Lumisum)"
+        settings.introShowsDate = false
+        settings.introDuration = 7.2
+        settings.introAnimationDuration = 1.4
+        settings.introTitleSize = 64
+        settings.introAnimationStyle = .cinematic
         let data = try JSONEncoder().encode(settings)
         XCTAssertEqual(try JSONDecoder().decode(RenderSettings.self, from: data), settings)
     }
@@ -51,6 +59,10 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.musicAwareness, RenderSettings().musicAwareness)
         XCTAssertEqual(settings.backgroundMotionStyle, RenderSettings().backgroundMotionStyle)
         XCTAssertEqual(settings.backgroundLife, RenderSettings().backgroundLife)
+        XCTAssertTrue(settings.introEnabled)
+        XCTAssertEqual(settings.authorName, "鹿鸣松(Lumisum)")
+        XCTAssertTrue(settings.introShowsDate)
+        XCTAssertEqual(settings.introAnimationStyle, .luminousRise)
     }
 
     func testAnalyzerStreamsAudioAndDetectsTransientFeatures() throws {

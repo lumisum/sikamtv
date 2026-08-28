@@ -54,6 +54,7 @@ final class RenderEngine {
     private let blurFilter = CIFilter(name: "CIGaussianBlur")
     private let colorFilter = CIFilter(name: "CIColorControls")
     private var lyricTexture: MTLTexture?
+    private var introTexture: MTLTexture?
 
     init() {
         guard let metal = MetalRenderer() else {
@@ -137,6 +138,7 @@ final class RenderEngine {
             vignetteAlpha: prepared.vignetteAlpha,
             accentWash: prepared.accentWash,
             mesh: prepared.mesh,
+            title: prepared.title,
             lyrics: prepared.lyrics,
             backgroundMotion: prepared.backgroundMotion,
             postProcess: prepared.postProcess
@@ -183,6 +185,7 @@ final class RenderEngine {
             vignetteAlpha: prepared.vignetteAlpha,
             accentWash: prepared.accentWash,
             mesh: prepared.mesh,
+            title: prepared.title,
             lyrics: prepared.lyrics,
             backgroundMotion: prepared.backgroundMotion,
             postProcess: prepared.postProcess
@@ -196,6 +199,7 @@ final class RenderEngine {
         let vignetteAlpha: Float
         let accentWash: SIMD4<Float>
         let mesh: VisualizerMesh
+        let title: MetalRenderer.TextureLayer?
         let lyrics: MetalRenderer.TextureLayer?
         let backgroundMotion: BackgroundMotionSettings
         let postProcess: PostProcessSettings
@@ -273,6 +277,13 @@ final class RenderEngine {
         } else {
             lyricsLayer = nil
         }
+        let titleLayer = makeIntroLayer(
+            size: size,
+            time: time,
+            settings: settings,
+            fontName: fontName,
+            features: directedFeatures
+        )
         let postProcess = PostProcessSettings(
             time: time,
             center: SIMD2(0.5, Float(min(0.92, max(0.08, settings.visualizerPositionY)))),
@@ -315,6 +326,7 @@ final class RenderEngine {
             vignetteAlpha: settings.template == .cinema ? 0.70 : 0.50,
             accentWash: SIMD4(Float(accent.0), Float(accent.1), Float(accent.2), washAlpha),
             mesh: mesh,
+            title: titleLayer,
             lyrics: lyricsLayer,
             backgroundMotion: backgroundMotion,
             postProcess: postProcess
@@ -512,6 +524,217 @@ final class RenderEngine {
             lyricLuminanceCache[key] = sample
         }
         return sample
+    }
+
+    private func makeIntroLayer(
+        size: CGSize,
+        time: Double,
+        settings: RenderSettings,
+        fontName: String,
+        features: AudioFrameFeatures
+    ) -> MetalRenderer.TextureLayer? {
+        let title = settings.songTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard settings.introEnabled, !title.isEmpty, time >= 0, time <= settings.introDuration else { return nil }
+        let portraitLayout = settings.aspectRatio != .landscape
+        let clip: CGRect
+        if portraitLayout {
+            clip = CGRect(x: size.width * 0.055, y: size.height * 0.745, width: size.width * 0.89, height: size.height * 0.22)
+        } else {
+            clip = CGRect(x: size.width * 0.035, y: size.height * 0.69, width: size.width * 0.57, height: size.height * 0.27)
+        }
+        let width = max(1, Int(clip.width.rounded(.up)))
+        let height = max(1, Int(clip.height.rounded(.up)))
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+        context.translateBy(x: -clip.minX, y: -clip.minY)
+        drawIntro(
+            title: title,
+            author: settings.authorName.trimmingCharacters(in: .whitespacesAndNewlines),
+            date: settings.introShowsDate ? Self.currentDateString() : "",
+            in: context,
+            size: size,
+            time: time,
+            settings: settings,
+            fontName: fontName,
+            features: features
+        )
+        guard let image = context.makeImage() else { return nil }
+        if introTexture?.width != width || introTexture?.height != height {
+            introTexture = metal.makeTexture(width: width, height: height)
+        }
+        guard let introTexture else { return nil }
+        metal.renderCIImage(CIImage(cgImage: image), to: introTexture)
+        return MetalRenderer.TextureLayer(texture: introTexture, rect: clip, alpha: 1)
+    }
+
+    private func drawIntro(
+        title: String,
+        author: String,
+        date: String,
+        in context: CGContext,
+        size: CGSize,
+        time: Double,
+        settings: RenderSettings,
+        fontName: String,
+        features: AudioFrameFeatures
+    ) {
+        let landscape = settings.aspectRatio == .landscape
+        let renderScale = size.width / max(1, settings.aspectRatio.size1080.width)
+        let titleSize = CGFloat(settings.introTitleSize) * renderScale
+        let alignment: LyricAlignment = landscape ? .leading : .center
+        let left = landscape ? size.width * 0.055 : size.width * 0.08
+        let textWidth = landscape ? size.width * 0.48 : size.width * 0.84
+        let titleY = landscape ? size.height * 0.865 : size.height * 0.885
+        let authorY = titleY - titleSize * 1.06
+        let dateY = authorY - titleSize * 0.62
+        let palette = settings.template.palette
+        let baseGlow = CGFloat(settings.lyricGlow) * renderScale * (18 + CGFloat(features.climax) * 8)
+
+        let backdropCenter = CGPoint(
+            x: landscape ? left + textWidth * 0.34 : size.width * 0.5,
+            y: titleY - titleSize * 0.55
+        )
+        let overall = introAnimation(time: time, delay: 0, settings: settings)
+        drawLyricScrim(
+            center: backdropCenter,
+            width: landscape ? textWidth * 1.18 : textWidth * 1.08,
+            height: titleSize * 3.6,
+            alpha: 0.22 * overall.alpha,
+            in: context
+        )
+
+        let titleMotion = introAnimation(time: time, delay: 0.08, settings: settings)
+        drawIntroText(
+            title,
+            centerY: titleY + titleMotion.offset,
+            left: left,
+            width: textWidth,
+            fontName: fontName,
+            fontSize: titleSize,
+            alignment: alignment,
+            alpha: titleMotion.alpha,
+            scale: titleMotion.scale,
+            color: VisualPalette.mix(palette.highlight, CGColor(gray: 1, alpha: 1), 0.55),
+            glowColor: palette.accent,
+            glow: settings.introAnimationStyle == .minimal ? 0 : baseGlow,
+            in: context
+        )
+
+        let authorMotion = introAnimation(time: time, delay: 0.26, settings: settings)
+        if !author.isEmpty {
+            drawIntroText(
+                author,
+                centerY: authorY + authorMotion.offset,
+                left: left,
+                width: textWidth,
+                fontName: fontName,
+                fontSize: titleSize * 0.46,
+                alignment: alignment,
+                alpha: authorMotion.alpha * 0.88,
+                scale: authorMotion.scale,
+                color: VisualPalette.mix(palette.accent, CGColor(gray: 1, alpha: 1), 0.45),
+                glowColor: palette.secondary,
+                glow: baseGlow * 0.45,
+                in: context
+            )
+        }
+
+        let dateMotion = introAnimation(time: time, delay: 0.42, settings: settings)
+        if !date.isEmpty {
+            drawIntroText(
+                date,
+                centerY: dateY + dateMotion.offset,
+                left: left,
+                width: textWidth,
+                fontName: "SFMono-Regular",
+                fontSize: titleSize * 0.30,
+                alignment: alignment,
+                alpha: dateMotion.alpha * 0.62,
+                scale: 1,
+                color: CGColor(gray: 0.92, alpha: 1),
+                glowColor: palette.cool,
+                glow: baseGlow * 0.22,
+                in: context
+            )
+        }
+    }
+
+    private func introAnimation(time: Double, delay: Double, settings: RenderSettings) -> (alpha: CGFloat, offset: CGFloat, scale: CGFloat) {
+        let animation = max(0.18, settings.introAnimationDuration)
+        let enter = smoothstep(0, 1, CGFloat((time - delay) / animation))
+        let exitStart = max(animation + delay + 0.2, settings.introDuration - animation)
+        let exit = 1 - smoothstep(0, 1, CGFloat((time - exitStart) / animation))
+        let alpha = max(0, min(1, enter * exit))
+        switch settings.introAnimationStyle {
+        case .luminousRise:
+            return (alpha, (1 - enter) * -18, 0.96 + enter * 0.04)
+        case .cinematic:
+            return (alpha, (1 - enter) * -7, 1.025 - enter * 0.025)
+        case .minimal:
+            return (alpha, 0, 1)
+        }
+    }
+
+    private func drawIntroText(
+        _ text: String,
+        centerY: CGFloat,
+        left: CGFloat,
+        width: CGFloat,
+        fontName: String,
+        fontSize: CGFloat,
+        alignment: LyricAlignment,
+        alpha: CGFloat,
+        scale: CGFloat,
+        color: CGColor,
+        glowColor: CGColor,
+        glow: CGFloat,
+        in context: CGContext
+    ) {
+        guard alpha > 0.001, !text.isEmpty else { return }
+        var font = CTFontCreateWithName(fontName as CFString, fontSize, nil)
+        var line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+        var bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
+        if bounds.width > width, bounds.width > 0 {
+            font = CTFontCreateCopyWithAttributes(font, fontSize * max(0.62, width / bounds.width), nil, nil)
+            line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+            bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
+        }
+        let x: CGFloat
+        switch alignment {
+        case .leading: x = left
+        case .center: x = left + (width - bounds.width) / 2
+        case .trailing: x = left + width - bounds.width
+        }
+        let anchorX = alignment == .center ? x + bounds.width / 2 : x
+        let y = centerY - bounds.height / 2
+        context.saveGState()
+        context.setAlpha(alpha)
+        if scale != 1 {
+            context.translateBy(x: anchorX, y: centerY)
+            context.scaleBy(x: scale, y: scale)
+            context.translateBy(x: -anchorX, y: -centerY)
+        }
+        if glow > 0 {
+            context.setShadow(offset: .zero, blur: glow, color: glowColor.copy(alpha: min(0.55, alpha * 0.48)))
+        }
+        let attributed = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
+        line = CTLineCreateWithAttributedString(attributed)
+        context.textPosition = CGPoint(x: x, y: y)
+        CTLineDraw(line, context)
+        context.restoreGState()
+    }
+
+    private static func currentDateString() -> String {
+        let components = Calendar(identifier: .gregorian).dateComponents([.year, .month, .day], from: Date())
+        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
 
     private func makeLyricsLayer(_ lines: [LRCLine], size: CGSize, time: Double, settings: RenderSettings, fontName: String, features: AudioFrameFeatures, contrast: LyricContrastProfile) -> MetalRenderer.TextureLayer? {

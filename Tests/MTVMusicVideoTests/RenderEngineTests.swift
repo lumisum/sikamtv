@@ -227,6 +227,53 @@ final class RenderEngineTests: XCTestCase {
         }
     }
 
+    func testOpeningCreditsFadeAndUseAspectAwarePlacement() throws {
+        let background = try XCTUnwrap(makeSolidBackground(gray: 0.18, width: 640, height: 640))
+        let engine = RenderEngine()
+        var settings = RenderSettings()
+        settings.blur = 0
+        settings.darkness = 0
+        settings.saturation = 1
+        settings.visualizerStrength = 0
+        settings.visualizerGlow = 0
+        settings.backgroundMotionStyle = .off
+        settings.songTitle = "心无挂碍"
+        settings.authorName = "鹿鸣松(Lumisum)"
+        settings.introShowsDate = true
+        settings.introDuration = 6
+        settings.introAnimationDuration = 1
+
+        settings.aspectRatio = .portrait
+        let portraitSize = CGSize(width: 270, height: 480)
+        var portraitBaselineSettings = settings
+        portraitBaselineSettings.introEnabled = false
+        let portraitBaseline = try XCTUnwrap(engine.render(size: portraitSize, time: 1.5, settings: portraitBaselineSettings, background: background, backgroundDuration: 0, backgroundIdentifier: "intro-portrait", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        let portrait = try XCTUnwrap(engine.render(size: portraitSize, time: 1.5, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "intro-portrait", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        let portraitTopCenter = maximumColorDifference(in: portrait, comparedWith: portraitBaseline, xStartRatio: 0.15, xEndRatio: 0.85, yStartRatio: 0.02, yEndRatio: 0.30)
+        let portraitBottom = maximumColorDifference(in: portrait, comparedWith: portraitBaseline, xStartRatio: 0.05, xEndRatio: 0.95, yStartRatio: 0.55, yEndRatio: 0.95)
+        XCTAssertGreaterThan(portraitTopCenter, 0.12, "Portrait credits should be centered near the top")
+        XCTAssertLessThan(portraitBottom, 0.02, "Portrait credits must not spill into the lower workspace")
+
+        settings.aspectRatio = .landscape
+        let landscapeSize = CGSize(width: 480, height: 270)
+        var landscapeBaselineSettings = settings
+        landscapeBaselineSettings.introEnabled = false
+        let landscapeBaseline = try XCTUnwrap(engine.render(size: landscapeSize, time: 1.5, settings: landscapeBaselineSettings, background: background, backgroundDuration: 0, backgroundIdentifier: "intro-landscape", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        let landscape = try XCTUnwrap(engine.render(size: landscapeSize, time: 1.5, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "intro-landscape", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        let landscapeTopLeft = maximumColorDifference(in: landscape, comparedWith: landscapeBaseline, xStartRatio: 0.02, xEndRatio: 0.62, yStartRatio: 0.02, yEndRatio: 0.34)
+        let landscapeBottomRight = maximumColorDifference(in: landscape, comparedWith: landscapeBaseline, xStartRatio: 0.65, xEndRatio: 0.98, yStartRatio: 0.55, yEndRatio: 0.96)
+        XCTAssertGreaterThan(landscapeTopLeft, 0.12, "Landscape credits should appear in the top-left")
+        XCTAssertLessThan(landscapeBottomRight, 0.02, "Landscape credits must stay out of the lower-right image")
+
+        let fadeStartBaseline = try XCTUnwrap(engine.render(size: landscapeSize, time: 0, settings: landscapeBaselineSettings, background: background, backgroundDuration: 0, backgroundIdentifier: "intro-fade", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        let fadeStart = try XCTUnwrap(engine.render(size: landscapeSize, time: 0, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "intro-fade", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        XCTAssertLessThan(sparseAverageColorDifference(fadeStartBaseline, fadeStart), 0.001, "Opening credits should begin fully transparent")
+
+        let finishedBaseline = try XCTUnwrap(engine.render(size: landscapeSize, time: 6.2, settings: landscapeBaselineSettings, background: background, backgroundDuration: 0, backgroundIdentifier: "intro-finished", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        let finished = try XCTUnwrap(engine.render(size: landscapeSize, time: 6.2, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "intro-finished", lyrics: [], analysis: nil, fontName: "PingFangSC-Regular"))
+        XCTAssertLessThan(sparseAverageColorDifference(finishedBaseline, finished), 0.001, "Opening credits should be gone after their display duration")
+    }
+
     func testBrightBackgroundAutomaticallyGetsStrongerLyricProtection() throws {
         let brightBackground = try XCTUnwrap(makeSolidBackground(gray: 0.96, width: 360, height: 640))
         let darkBackground = try XCTUnwrap(makeSolidBackground(gray: 0.04, width: 360, height: 640))
@@ -462,6 +509,36 @@ final class RenderEngineTests: XCTestCase {
         var maximum: CGFloat = 0
         for y in y0...y1 {
             for x in 0..<bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      let reference = baselineBitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                maximum = max(
+                    maximum,
+                    abs(color.redComponent - reference.redComponent)
+                        + abs(color.greenComponent - reference.greenComponent)
+                        + abs(color.blueComponent - reference.blueComponent)
+                )
+            }
+        }
+        return maximum
+    }
+
+    private func maximumColorDifference(
+        in image: CGImage,
+        comparedWith baseline: CGImage,
+        xStartRatio: CGFloat,
+        xEndRatio: CGFloat,
+        yStartRatio: CGFloat,
+        yEndRatio: CGFloat
+    ) -> CGFloat {
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        let baselineBitmap = NSBitmapImageRep(cgImage: baseline)
+        let x0 = min(bitmap.pixelsWide - 1, max(0, Int((CGFloat(bitmap.pixelsWide) * xStartRatio).rounded())))
+        let x1 = min(bitmap.pixelsWide - 1, max(0, Int((CGFloat(bitmap.pixelsWide) * xEndRatio).rounded())))
+        let y0 = min(bitmap.pixelsHigh - 1, max(0, Int((CGFloat(bitmap.pixelsHigh) * yStartRatio).rounded())))
+        let y1 = min(bitmap.pixelsHigh - 1, max(0, Int((CGFloat(bitmap.pixelsHigh) * yEndRatio).rounded())))
+        var maximum: CGFloat = 0
+        for y in y0...y1 {
+            for x in x0...x1 {
                 guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
                       let reference = baselineBitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
                 maximum = max(

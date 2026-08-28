@@ -332,6 +332,13 @@ enum LyricAlignment: String, CaseIterable, Identifiable, Codable, Sendable {
     var id: String { rawValue }
 }
 
+enum IntroAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendable {
+    case luminousRise = "流光上浮"
+    case cinematic = "电影淡入"
+    case minimal = "简约显现"
+    var id: String { rawValue }
+}
+
 struct RenderSettings: Codable, Equatable, Sendable {
     var aspectRatio: AspectRatio = .portrait
     var template: VisualTemplate = .ethereal
@@ -374,6 +381,15 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var lyricAlignment: LyricAlignment = .center
     var fontPostScriptName: String = FontManager.defaultPostScriptName
 
+    var introEnabled: Bool = true
+    var songTitle: String = ""
+    var authorName: String = "鹿鸣松(Lumisum)"
+    var introShowsDate: Bool = true
+    var introDuration: Double = 6.5
+    var introAnimationDuration: Double = 1.15
+    var introTitleSize: Double = 58
+    var introAnimationStyle: IntroAnimationStyle = .luminousRise
+
     init() {}
 
     private enum CodingKeys: String, CodingKey {
@@ -384,6 +400,7 @@ struct RenderSettings: Codable, Equatable, Sendable {
         case visualizerBrilliance, visualizerIntegration, visualizerTrail, visualizerColorRichness, visualizerDepth, visualizerBeatImpact, musicAwareness
         case lyricSize, lyricPositionY, lyricWidth, lyricLineSpacing, lyricInactiveOpacity, lyricGlow, lyricAnimationDuration
         case lyricAnimation, lyricAlignment, fontPostScriptName
+        case introEnabled, songTitle, authorName, introShowsDate, introDuration, introAnimationDuration, introTitleSize, introAnimationStyle
     }
 
     init(from decoder: Decoder) throws {
@@ -427,6 +444,14 @@ struct RenderSettings: Codable, Equatable, Sendable {
         lyricAnimation = try container.decodeIfPresent(LyricAnimation.self, forKey: .lyricAnimation) ?? defaults.lyricAnimation
         lyricAlignment = try container.decodeIfPresent(LyricAlignment.self, forKey: .lyricAlignment) ?? defaults.lyricAlignment
         fontPostScriptName = try container.decodeIfPresent(String.self, forKey: .fontPostScriptName) ?? defaults.fontPostScriptName
+        introEnabled = try container.decodeIfPresent(Bool.self, forKey: .introEnabled) ?? defaults.introEnabled
+        songTitle = try container.decodeIfPresent(String.self, forKey: .songTitle) ?? defaults.songTitle
+        authorName = try container.decodeIfPresent(String.self, forKey: .authorName) ?? defaults.authorName
+        introShowsDate = try container.decodeIfPresent(Bool.self, forKey: .introShowsDate) ?? defaults.introShowsDate
+        introDuration = try container.decodeIfPresent(Double.self, forKey: .introDuration) ?? defaults.introDuration
+        introAnimationDuration = try container.decodeIfPresent(Double.self, forKey: .introAnimationDuration) ?? defaults.introAnimationDuration
+        introTitleSize = try container.decodeIfPresent(Double.self, forKey: .introTitleSize) ?? defaults.introTitleSize
+        introAnimationStyle = try container.decodeIfPresent(IntroAnimationStyle.self, forKey: .introAnimationStyle) ?? defaults.introAnimationStyle
     }
 
     func encode(to encoder: Encoder) throws {
@@ -469,6 +494,14 @@ struct RenderSettings: Codable, Equatable, Sendable {
         try container.encode(lyricAnimation, forKey: .lyricAnimation)
         try container.encode(lyricAlignment, forKey: .lyricAlignment)
         try container.encode(fontPostScriptName, forKey: .fontPostScriptName)
+        try container.encode(introEnabled, forKey: .introEnabled)
+        try container.encode(songTitle, forKey: .songTitle)
+        try container.encode(authorName, forKey: .authorName)
+        try container.encode(introShowsDate, forKey: .introShowsDate)
+        try container.encode(introDuration, forKey: .introDuration)
+        try container.encode(introAnimationDuration, forKey: .introAnimationDuration)
+        try container.encode(introTitleSize, forKey: .introTitleSize)
+        try container.encode(introAnimationStyle, forKey: .introAnimationStyle)
     }
 }
 
