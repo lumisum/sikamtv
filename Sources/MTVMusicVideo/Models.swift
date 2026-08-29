@@ -375,7 +375,7 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var backgroundLightFlow: Double = 0.12
     var backgroundSubjectProtection: Double = 0.82
     var smartCompositionEnabled: Bool = true
-    var subjectEdgeLight: Double = 0.34
+    var subjectEdgeLight: Double = 0.12
 
     var visualizerStrength: Double = 0.86
     var visualizerPositionY: Double = 0.31
@@ -384,12 +384,14 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var visualizerSmoothing: Double = 0.72
     var visualizerDensity: Double = 0.86
     var visualizerBrilliance: Double = 0.72
-    var visualizerIntegration: Double = 0.62
+    var visualizerIntegration: Double = 0.72
     var visualizerTrail: Double = 0.28
     var visualizerColorRichness: Double = 0.72
     var visualizerDepth: Double = 0.56
     var visualizerBeatImpact: Double = 0.55
     var musicAwareness: Double = 0.88
+    var sevenColorFlowEnabled: Bool = true
+    var sevenColorFlowIntensity: Double = 0.74
 
     var lyricSize: Double = 42
     var lyricPositionY: Double = 0.60
@@ -421,6 +423,7 @@ struct RenderSettings: Codable, Equatable, Sendable {
         case smartCompositionEnabled, subjectEdgeLight
         case visualizerStrength, visualizerPositionY, visualizerScale, visualizerGlow, visualizerSmoothing, visualizerDensity
         case visualizerBrilliance, visualizerIntegration, visualizerTrail, visualizerColorRichness, visualizerDepth, visualizerBeatImpact, musicAwareness
+        case sevenColorFlowEnabled, sevenColorFlowIntensity
         case lyricSize, lyricPositionY, lyricWidth, lyricLineSpacing, lyricInactiveOpacity, lyricGlow, lyricAnimationDuration
         case lyricAnimation, lyricAlignment, fontPostScriptName
         case introEnabled, songTitle, authorName, introShowsDate, introDuration, introAnimationDuration, introTitleSize, introAnimationStyle
@@ -464,6 +467,8 @@ struct RenderSettings: Codable, Equatable, Sendable {
         visualizerDepth = try container.decodeIfPresent(Double.self, forKey: .visualizerDepth) ?? defaults.visualizerDepth
         visualizerBeatImpact = try container.decodeIfPresent(Double.self, forKey: .visualizerBeatImpact) ?? defaults.visualizerBeatImpact
         musicAwareness = try container.decodeIfPresent(Double.self, forKey: .musicAwareness) ?? defaults.musicAwareness
+        sevenColorFlowEnabled = try container.decodeIfPresent(Bool.self, forKey: .sevenColorFlowEnabled) ?? defaults.sevenColorFlowEnabled
+        sevenColorFlowIntensity = try container.decodeIfPresent(Double.self, forKey: .sevenColorFlowIntensity) ?? defaults.sevenColorFlowIntensity
         lyricSize = try container.decodeIfPresent(Double.self, forKey: .lyricSize) ?? defaults.lyricSize
         lyricPositionY = try container.decodeIfPresent(Double.self, forKey: .lyricPositionY) ?? defaults.lyricPositionY
         lyricWidth = try container.decodeIfPresent(Double.self, forKey: .lyricWidth) ?? defaults.lyricWidth
@@ -521,6 +526,8 @@ struct RenderSettings: Codable, Equatable, Sendable {
         try container.encode(visualizerDepth, forKey: .visualizerDepth)
         try container.encode(visualizerBeatImpact, forKey: .visualizerBeatImpact)
         try container.encode(musicAwareness, forKey: .musicAwareness)
+        try container.encode(sevenColorFlowEnabled, forKey: .sevenColorFlowEnabled)
+        try container.encode(sevenColorFlowIntensity, forKey: .sevenColorFlowIntensity)
         try container.encode(lyricSize, forKey: .lyricSize)
         try container.encode(lyricPositionY, forKey: .lyricPositionY)
         try container.encode(lyricWidth, forKey: .lyricWidth)
@@ -558,6 +565,10 @@ struct AudioFrameFeatures: Sendable {
     let quiet: Float
     let warmth: Float
     let sectionProgress: Float
+    let chroma: [Float]
+    let tonalConfidence: Float
+    let tonalRoot: Int
+    let tonalMode: Int
 
     init(
         amplitude: Float,
@@ -574,7 +585,11 @@ struct AudioFrameFeatures: Sendable {
         climax: Float = 0,
         quiet: Float = 1,
         warmth: Float = 0.5,
-        sectionProgress: Float = 0
+        sectionProgress: Float = 0,
+        chroma: [Float] = Array(repeating: 0, count: 12),
+        tonalConfidence: Float = 0,
+        tonalRoot: Int = 0,
+        tonalMode: Int = 1
     ) {
         self.amplitude = amplitude
         self.loudness = loudness
@@ -591,6 +606,10 @@ struct AudioFrameFeatures: Sendable {
         self.quiet = quiet
         self.warmth = warmth
         self.sectionProgress = sectionProgress
+        self.chroma = chroma
+        self.tonalConfidence = tonalConfidence
+        self.tonalRoot = tonalRoot
+        self.tonalMode = tonalMode
     }
 
     func directed(amount: Float) -> AudioFrameFeatures {
@@ -612,7 +631,11 @@ struct AudioFrameFeatures: Sendable {
             climax: climax,
             quiet: quiet,
             warmth: warmth,
-            sectionProgress: sectionProgress
+            sectionProgress: sectionProgress,
+            chroma: chroma,
+            tonalConfidence: tonalConfidence,
+            tonalRoot: tonalRoot,
+            tonalMode: tonalMode
         )
     }
 
@@ -620,12 +643,13 @@ struct AudioFrameFeatures: Sendable {
         amplitude: 0, loudness: 0, bass: 0, mid: 0, high: 0, beat: 0,
         spectrum: Array(repeating: 0, count: 96),
         waveform: Array(repeating: 0, count: 128),
-        energy: 0, transient: 0, buildup: 0, climax: 0, quiet: 1, warmth: 0.5, sectionProgress: 0
+        energy: 0, transient: 0, buildup: 0, climax: 0, quiet: 1, warmth: 0.5, sectionProgress: 0,
+        chroma: Array(repeating: 0, count: 12), tonalConfidence: 0, tonalRoot: 0, tonalMode: 1
     )
 }
 
 struct AudioAnalysis: Codable, Sendable {
-    static let cacheVersion = 3
+    static let cacheVersion = 4
 
     let version: Int
     let duration: Double
@@ -646,6 +670,10 @@ struct AudioAnalysis: Codable, Sendable {
     let quietness: [Float]
     let warmth: [Float]
     let sectionProgress: [Float]
+    let chroma: [[Float]]
+    let tonalConfidence: [Float]
+    let tonalRoot: Int
+    let tonalMode: Int
 
     init(
         version: Int = AudioAnalysis.cacheVersion,
@@ -666,7 +694,11 @@ struct AudioAnalysis: Codable, Sendable {
         climaxes: [Float]? = nil,
         quietness: [Float]? = nil,
         warmth: [Float]? = nil,
-        sectionProgress: [Float]? = nil
+        sectionProgress: [Float]? = nil,
+        chroma: [[Float]]? = nil,
+        tonalConfidence: [Float]? = nil,
+        tonalRoot: Int = 0,
+        tonalMode: Int = 1
     ) {
         self.version = version
         self.duration = duration
@@ -687,6 +719,10 @@ struct AudioAnalysis: Codable, Sendable {
         self.quietness = quietness ?? self.loudness.map { 1 - $0 }
         self.warmth = warmth ?? Array(repeating: 0.5, count: amplitudes.count)
         self.sectionProgress = sectionProgress ?? Array(repeating: 0, count: amplitudes.count)
+        self.chroma = chroma ?? Array(repeating: Array(repeating: 0, count: 12), count: amplitudes.count)
+        self.tonalConfidence = tonalConfidence ?? Array(repeating: 0, count: amplitudes.count)
+        self.tonalRoot = min(11, max(0, tonalRoot))
+        self.tonalMode = tonalMode == 0 ? 0 : 1
     }
 
     func frame(at time: Double) -> AudioFrameFeatures {
@@ -709,7 +745,11 @@ struct AudioAnalysis: Codable, Sendable {
             climax: value(climaxes, index),
             quiet: value(quietness, index),
             warmth: value(warmth, index),
-            sectionProgress: value(sectionProgress, index)
+            sectionProgress: value(sectionProgress, index),
+            chroma: array(chroma, index, 12),
+            tonalConfidence: value(tonalConfidence, index),
+            tonalRoot: tonalRoot,
+            tonalMode: tonalMode
         )
     }
 

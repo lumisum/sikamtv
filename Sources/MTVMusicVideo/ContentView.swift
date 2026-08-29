@@ -837,7 +837,7 @@ struct SettingsPanel: View {
                         SliderRow(title: "空间视差", value: $workspace.settings.backgroundParallax, range: 0...1, displayMultiplier: 100, suffix: "%")
                         SliderRow(title: "光流强度", value: $workspace.settings.backgroundLightFlow, range: 0...1, displayMultiplier: 100, suffix: "%")
                         SliderRow(title: "智能主体保护", value: $workspace.settings.backgroundSubjectProtection, range: 0...1, displayMultiplier: 100, suffix: "%")
-                        SliderRow(title: "主体轮廓光", value: $workspace.settings.subjectEdgeLight, range: 0...1, displayMultiplier: 100, suffix: "%")
+                        SliderRow(title: "主体环境光", value: $workspace.settings.subjectEdgeLight, range: 0...1, displayMultiplier: 100, suffix: "%")
                             .disabled(!workspace.settings.smartCompositionEnabled)
                     }
                 }
@@ -935,12 +935,14 @@ struct SettingsPanel: View {
                 .disabled(workspace.settings.visualizer == .border)
             SliderRow(title: "整体大小", value: $workspace.settings.visualizerScale, range: 0.6...1.5, displayMultiplier: 100, suffix: "%")
             SliderRow(title: "光晕", value: $workspace.settings.visualizerGlow, range: 0...1, displayMultiplier: 100, suffix: "%")
-            if workspace.settings.visualizer == .border {
-                Text("流光边界会自动环绕画布；“整体大小”用于调整边缘内缩程度。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            Toggle("七色流光", isOn: $workspace.settings.sevenColorFlowEnabled)
+            if workspace.settings.sevenColorFlowEnabled {
+                SliderRow(title: "旋律色彩", value: $workspace.settings.sevenColorFlowIntensity, range: 0.25...1, displayMultiplier: 100, suffix: "%")
             }
+            Text("适用于全部可视化：自动分析歌曲调性，将 Do–Si 映射为七色；不同效果会按波形、频段、环层或粒子自然分配色彩。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup("高级视觉设置") {
                 VStack(alignment: .leading, spacing: 10) {
                     SliderRow(title: "音乐感知", value: $workspace.settings.musicAwareness, range: 0...1, displayMultiplier: 100, suffix: "%")

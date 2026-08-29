@@ -134,10 +134,10 @@ final class VisionSubjectMaskCache: @unchecked Sendable {
         let input = CIImage(cgImage: rawMask)
         let softened = input
             .applyingFilter("CIColorControls", parameters: [
-                kCIInputContrastKey: 1.45,
-                kCIInputBrightnessKey: 0.05
+                kCIInputContrastKey: 1.08,
+                kCIInputBrightnessKey: -0.015
             ])
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 7.5])
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 14.0])
             .cropped(to: input.extent)
         return ciContext.createCGImage(softened, from: input.extent)
     }
@@ -249,7 +249,7 @@ final class VisionSubjectMaskCache: @unchecked Sendable {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = attributes?[.size] as? NSNumber
         let modified = attributes?[.modificationDate] as? Date
-        let identity = "\(url.standardizedFileURL.path)|\(size?.int64Value ?? 0)|\(modified?.timeIntervalSince1970 ?? 0)|vision-mask-v2"
+        let identity = "\(url.standardizedFileURL.path)|\(size?.int64Value ?? 0)|\(modified?.timeIntervalSince1970 ?? 0)|vision-mask-v3-soft"
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in identity.utf8 { hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211 }
         return String(hash, radix: 16)

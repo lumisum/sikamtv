@@ -34,7 +34,11 @@ struct VisualizerEngine {
             climax: understood.climax,
             quiet: understood.quiet,
             warmth: understood.warmth,
-            sectionProgress: understood.sectionProgress
+            sectionProgress: understood.sectionProgress,
+            chroma: understood.chroma,
+            tonalConfidence: understood.tonalConfidence,
+            tonalRoot: understood.tonalRoot,
+            tonalMode: understood.tonalMode
         )
         let desiredCenter = CGPoint(x: size.width * 0.5, y: size.height * settings.visualizerPositionY)
         let renderScale = size.width / max(1, settings.aspectRatio.size1080.width)
@@ -51,6 +55,9 @@ struct VisualizerEngine {
         guard settings.visualizerStrength > 0.001 else { return mesh }
         if kind != .border {
             appendAura(&mesh, center: center, size: size, features: frame, settings: settings, palette: palette)
+            if kind != .nebula && kind != .starfield {
+                appendIntegrationDust(&mesh, center: center, size: size, features: frame, settings: settings, palette: palette, time: time, renderScale: renderScale)
+            }
         }
         switch kind {
         case .wave:
@@ -97,6 +104,10 @@ struct VisualizerEngine {
         let bass = CGFloat(features.bass)
         let beat = CGFloat(features.beat)
         let musicalMotion = CGFloat(features.energy * 0.55 + features.buildup * 0.30 + features.climax * 0.15)
+        let activePitches = activePitchClasses(features)
+        let warmColor = harmonicColor(slot: 0, progress: 0.10, activePitches: activePitches, features: features, settings: settings, palette: palette)
+        let middleColor = harmonicColor(slot: 2, progress: 0.50, activePitches: activePitches, features: features, settings: settings, palette: palette)
+        let coolColor = harmonicColor(slot: 4, progress: 0.86, activePitches: activePitches, features: features, settings: settings, palette: palette)
         let slowPulse = 0.78 + sin(CGFloat(time) * (0.22 + musicalMotion * 0.20)) * 0.09 + loudness * 0.12 + CGFloat(features.climax) * 0.12
         let sectionOffset = CGFloat(features.sectionProgress) * .pi * 2
         let driftX = sin(CGFloat(time) * (0.052 + musicalMotion * 0.035) + sectionOffset * 0.18)
@@ -107,21 +118,21 @@ struct VisualizerEngine {
             center: CGPoint(x: size.width * (0.20 + driftX * 0.08), y: size.height * (0.74 + driftY * 0.05)),
             radiusX: size.width * (0.46 + bass * 0.05),
             radiusY: size.height * 0.34,
-            color: gpuColor(palette.accent, alpha: glow * motionBoost * (0.045 + beat * 0.025 + CGFloat(features.climax) * 0.035) * slowPulse)
+            color: gpuColor(warmColor, alpha: glow * motionBoost * (0.045 + beat * 0.025 + CGFloat(features.climax) * 0.035) * slowPulse)
         )
         appendRadial(
             &mesh.radials,
             center: CGPoint(x: size.width * (0.82 - driftX * 0.07), y: size.height * (0.35 - driftY * 0.06)),
             radiusX: size.width * 0.42,
             radiusY: size.height * (0.30 + loudness * 0.04),
-            color: gpuColor(palette.secondary, alpha: glow * motionBoost * (0.038 + loudness * 0.028 + CGFloat(features.buildup) * 0.035))
+            color: gpuColor(middleColor, alpha: glow * motionBoost * (0.038 + loudness * 0.028 + CGFloat(features.buildup) * 0.035))
         )
         appendRadial(
             &mesh.radials,
             center: CGPoint(x: size.width * (0.52 + driftY * 0.05), y: size.height * (0.88 - driftX * 0.04)),
             radiusX: size.width * 0.30,
             radiusY: size.height * 0.19,
-            color: gpuColor(palette.warm, alpha: glow * motionBoost * (0.020 + beat * 0.022 + CGFloat(features.warmth) * CGFloat(features.energy) * 0.030))
+            color: gpuColor(coolColor, alpha: glow * motionBoost * (0.020 + beat * 0.022 + CGFloat(features.warmth) * CGFloat(features.energy) * 0.030))
         )
     }
 
@@ -146,30 +157,65 @@ struct VisualizerEngine {
 
     private func appendAura(_ mesh: inout VisualizerMesh, center: CGPoint, size: CGSize, features: AudioFrameFeatures, settings: RenderSettings, palette: VisualPalette) {
         let glow = CGFloat(settings.visualizerGlow)
+        let integration = CGFloat(settings.visualizerIntegration)
         let minimum = min(size.width, size.height)
         let outerRadius = minimum * (0.28 + CGFloat(features.bass) * 0.08 + CGFloat(features.energy) * 0.035) * settings.visualizerScale
         let innerRadius = minimum * (0.10 + CGFloat(features.beat) * 0.055 + CGFloat(features.transient) * 0.025) * settings.visualizerScale
+        let activePitches = activePitchClasses(features)
         appendRadial(
             &mesh.radials,
             center: center,
             radiusX: outerRadius * 1.85,
             radiusY: outerRadius * 0.52,
-            color: gpuColor(palette.cool, alpha: glow * (0.045 + CGFloat(features.loudness) * 0.065 + CGFloat(features.buildup) * 0.035))
+            color: gpuColor(harmonicColor(slot: 4, progress: 0.82, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: glow * (0.032 + integration * 0.020 + CGFloat(features.loudness) * 0.050 + CGFloat(features.buildup) * 0.030))
         )
         appendRadial(
             &mesh.radials,
             center: center,
             radiusX: outerRadius * 0.78,
             radiusY: outerRadius * 0.78,
-            color: gpuColor(palette.accent, alpha: glow * (0.055 + CGFloat(features.beat) * 0.080 + CGFloat(features.climax) * 0.075))
+            color: gpuColor(harmonicColor(slot: 0, progress: 0.20, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: glow * (0.040 + integration * 0.018 + CGFloat(features.beat) * 0.060 + CGFloat(features.climax) * 0.060))
         )
         appendRadial(
             &mesh.radials,
             center: center,
             radiusX: innerRadius,
             radiusY: innerRadius,
-            color: gpuColor(palette.secondary, alpha: glow * (0.040 + CGFloat(features.beat) * 0.10))
+            color: gpuColor(harmonicColor(slot: 2, progress: 0.52, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: glow * (0.030 + integration * 0.014 + CGFloat(features.beat) * 0.075))
         )
+    }
+
+    private func appendIntegrationDust(
+        _ mesh: inout VisualizerMesh,
+        center: CGPoint,
+        size: CGSize,
+        features: AudioFrameFeatures,
+        settings: RenderSettings,
+        palette: VisualPalette,
+        time: Double,
+        renderScale: CGFloat
+    ) {
+        let spectrum = features.spectrum
+        guard !spectrum.isEmpty else { return }
+        let integration = CGFloat(settings.visualizerIntegration)
+        guard integration > 0.08 else { return }
+        let width = size.width * 0.46 * settings.visualizerScale
+        let height = min(size.width, size.height) * 0.20 * settings.visualizerScale
+        let count = max(16, Int(16 + settings.visualizerDensity * 18))
+        let activePitches = activePitchClasses(features)
+        for index in 0..<count {
+            let seed = CGFloat(index)
+            let source = min(spectrum.count - 1, Int(pseudo(seed * 5.91) * CGFloat(spectrum.count - 1)))
+            let spectral = CGFloat(spectrum[source])
+            let angle = pseudo(seed * 7.27) * .pi * 2 + CGFloat(time) * (0.010 + pseudo(seed * 3.43) * 0.022)
+            let orbit = 0.18 + sqrt(pseudo(seed * 8.13)) * 0.82
+            let x = center.x + cos(angle) * width * orbit
+            let y = center.y + sin(angle * 1.07) * height * orbit
+            let radius = (0.7 + pseudo(seed * 2.79) * 1.7 + spectral * 2.4) * renderScale
+            let color = harmonicColor(slot: index, progress: CGFloat(index) / CGFloat(max(1, count - 1)), activePitches: activePitches, features: features, settings: settings, palette: palette)
+            appendRadial(&mesh.radials, center: CGPoint(x: x, y: y), radiusX: radius * 4.2, radiusY: radius * 4.2, color: gpuColor(color, alpha: integration * (0.010 + spectral * 0.028)))
+            appendRadial(&mesh.radials, center: CGPoint(x: x, y: y), radiusX: radius, radiusY: radius, color: gpuColor(VisualPalette.mix(color, palette.highlight, 0.32), alpha: integration * (0.065 + spectral * 0.20 + CGFloat(features.high) * 0.035)))
+        }
     }
 
     private func appendWave(_ mesh: inout VisualizerMesh, center: CGPoint, size: CGSize, features: AudioFrameFeatures, settings: RenderSettings, palette: VisualPalette, time: Double, renderScale: CGFloat) {
@@ -178,7 +224,8 @@ struct VisualizerEngine {
         let height = min(size.width, size.height) * (0.045 + CGFloat(features.loudness) * 0.085) * settings.visualizerStrength
         let startX = center.x - width / 2
         let glow = CGFloat(settings.visualizerGlow)
-        appendRadial(&mesh.radials, center: center, radiusX: width * 0.54, radiusY: height * 2.8, color: gpuColor(palette.accent, alpha: 0.025 + CGFloat(features.loudness) * 0.045))
+        let activePitches = activePitchClasses(features)
+        appendRadial(&mesh.radials, center: center, radiusX: width * 0.54, radiusY: height * 2.8, color: gpuColor(harmonicColor(slot: 2, progress: 0.5, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.025 + CGFloat(features.loudness) * 0.045))
         for ribbon in 0..<5 {
             var points: [SIMD2<Float>] = []
             points.reserveCapacity(values.count)
@@ -193,9 +240,10 @@ struct VisualizerEngine {
                 points.append(SIMD2(Float(x), Float(y)))
             }
             if ribbon == 2 {
-                appendFilledWave(&mesh.soft, points: points, baselineY: Float(center.y), top: gpuColor(palette.accent, alpha: 0.11 + CGFloat(features.loudness) * 0.09), bottom: gpuColor(palette.cool, alpha: 0.01))
+                let fillColor = harmonicColor(slot: ribbon, progress: 0.5, activePitches: activePitches, features: features, settings: settings, palette: palette)
+                appendFilledWave(&mesh.soft, points: points, baselineY: Float(center.y), top: gpuColor(fillColor, alpha: 0.11 + CGFloat(features.loudness) * 0.09), bottom: gpuColor(fillColor, alpha: 0.01))
             }
-            let color = palette.ribbon(ribbon)
+            let color = harmonicColor(slot: ribbon, progress: CGFloat(ribbon) / 4, activePitches: activePitches, features: features, settings: settings, palette: palette)
             appendPolyline(&mesh.additive, points: points, width: Float((9 + glow * 8) * renderScale), color: gpuColor(color, alpha: ribbon == 2 ? 0.075 : 0.028), closed: false)
             appendPolyline(&mesh.additive, points: points, width: Float((ribbon == 2 ? 1.75 : 1.05) * renderScale), color: gpuColor(color, alpha: ribbon == 2 ? 0.62 : 0.20 + CGFloat(features.high) * 0.12), closed: false)
         }
@@ -211,12 +259,13 @@ struct VisualizerEngine {
         let spectrum = features.spectrum
         let glow = CGFloat(settings.visualizerGlow)
         guard !spectrum.isEmpty else { return }
+        let activePitches = activePitchClasses(features)
         appendRadial(
             &mesh.radials,
             center: CGPoint(x: center.x, y: baseline + maxHeight * 0.16),
             radiusX: width * 0.55,
             radiusY: maxHeight * 1.45,
-            color: gpuColor(palette.cool, alpha: 0.022 + CGFloat(features.loudness) * 0.035)
+            color: gpuColor(harmonicColor(slot: 4, progress: 0.82, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.022 + CGFloat(features.loudness) * 0.035)
         )
         for index in 0..<count {
             let progress = CGFloat(index) / CGFloat(max(1, count - 1))
@@ -226,7 +275,7 @@ struct VisualizerEngine {
             let bassBoost = sourceProgress < 0.18 ? CGFloat(features.bass) * 0.20 : 0
             let height = max(2 * renderScale, pow(value + bassBoost, 1.18) * maxHeight + CGFloat(features.beat) * maxHeight * 0.045)
             let x = center.x - width / 2 + CGFloat(index) * gap + (gap - barWidth) / 2
-            let sourceColor = palette.tone(at: sourceProgress)
+            let sourceColor = harmonicColor(slot: index, progress: sourceProgress, activePitches: activePitches, features: features, settings: settings, palette: palette)
             let glowPad = barWidth * (0.35 + glow * 0.45)
             appendRect(&mesh.additive, x: Float(x - glowPad), y: Float(baseline), width: Float(barWidth + glowPad * 2), height: Float(height * 1.06), color: gpuColor(sourceColor, alpha: 0.045 + min(0.09, value * 0.08) + glow * 0.025))
             appendRect(&mesh.soft, x: Float(x), y: Float(baseline), width: Float(barWidth), height: Float(height), color: gpuColor(sourceColor, alpha: 0.30 + min(0.34, value * 0.34)))
@@ -249,6 +298,7 @@ struct VisualizerEngine {
         let startX = center.x - width / 2
         let maximum = min(size.height * 0.17, min(size.width, size.height) * 0.22) * settings.visualizerStrength
         let pointCount = max(72, Int(72 + settings.visualizerDensity * 48))
+        let activePitches = activePitchClasses(features)
         var upper: [SIMD2<Float>] = []
         var lower: [SIMD2<Float>] = []
         upper.reserveCapacity(pointCount)
@@ -264,14 +314,16 @@ struct VisualizerEngine {
             upper.append(SIMD2(Float(x), Float(center.y + envelope * maximum)))
             lower.append(SIMD2(Float(x), Float(center.y - envelope * maximum * 0.72)))
         }
-        appendRibbonFill(&mesh.soft, upper: upper, lower: lower, color: gpuColor(palette.accent, alpha: 0.10 + CGFloat(features.loudness) * 0.10))
-        appendRadial(&mesh.radials, center: center, radiusX: width * 0.54, radiusY: maximum * 1.8, color: gpuColor(palette.secondary, alpha: 0.025 + CGFloat(features.bass) * 0.040))
+        let upperColor = harmonicColor(slot: 1, progress: 0.32, activePitches: activePitches, features: features, settings: settings, palette: palette)
+        let lowerColor = harmonicColor(slot: 4, progress: 0.72, activePitches: activePitches, features: features, settings: settings, palette: palette)
+        appendRibbonFill(&mesh.soft, upper: upper, lower: lower, color: gpuColor(VisualPalette.mix(upperColor, lowerColor, 0.42), alpha: 0.10 + CGFloat(features.loudness) * 0.10))
+        appendRadial(&mesh.radials, center: center, radiusX: width * 0.54, radiusY: maximum * 1.8, color: gpuColor(lowerColor, alpha: 0.025 + CGFloat(features.bass) * 0.040))
         let glow = CGFloat(settings.visualizerGlow)
-        appendPolyline(&mesh.additive, points: upper, width: Float((8 + glow * 8) * renderScale), color: gpuColor(palette.cool, alpha: 0.055), closed: false)
-        appendPolyline(&mesh.additive, points: lower, width: Float((8 + glow * 8) * renderScale), color: gpuColor(palette.secondary, alpha: 0.045), closed: false)
-        appendPolyline(&mesh.additive, points: upper, width: Float(1.65 * renderScale), color: gpuColor(palette.highlight, alpha: 0.56), closed: false)
-        appendPolyline(&mesh.additive, points: lower, width: Float(1.2 * renderScale), color: gpuColor(palette.secondary, alpha: 0.36), closed: false)
-        appendPolyline(&mesh.additive, points: [SIMD2(Float(startX), Float(center.y)), SIMD2(Float(startX + width), Float(center.y))], width: Float(max(0.7, renderScale)), color: gpuColor(palette.accent, alpha: 0.13), closed: false)
+        appendPolyline(&mesh.additive, points: upper, width: Float((8 + glow * 8) * renderScale), color: gpuColor(upperColor, alpha: 0.055), closed: false)
+        appendPolyline(&mesh.additive, points: lower, width: Float((8 + glow * 8) * renderScale), color: gpuColor(lowerColor, alpha: 0.045), closed: false)
+        appendPolyline(&mesh.additive, points: upper, width: Float(1.65 * renderScale), color: gpuColor(VisualPalette.mix(upperColor, palette.highlight, 0.42), alpha: 0.56), closed: false)
+        appendPolyline(&mesh.additive, points: lower, width: Float(1.2 * renderScale), color: gpuColor(lowerColor, alpha: 0.36), closed: false)
+        appendPolyline(&mesh.additive, points: [SIMD2(Float(startX), Float(center.y)), SIMD2(Float(startX + width), Float(center.y))], width: Float(max(0.7, renderScale)), color: gpuColor(VisualPalette.mix(upperColor, lowerColor, 0.5), alpha: 0.13), closed: false)
     }
 
     private func appendEnergyRing(_ mesh: inout VisualizerMesh, center: CGPoint, size: CGSize, features: AudioFrameFeatures, settings: RenderSettings, palette: VisualPalette, time: Double, renderScale: CGFloat) {
@@ -280,8 +332,9 @@ struct VisualizerEngine {
         let values = features.spectrum
         let glow = CGFloat(settings.visualizerGlow)
         guard !values.isEmpty else { return }
-        appendRadial(&mesh.radials, center: center, radiusX: radius * 2.05, radiusY: radius * 2.05, color: gpuColor(palette.cool, alpha: 0.022 + CGFloat(features.loudness) * 0.035))
-        appendRadial(&mesh.radials, center: center, radiusX: radius * 0.92, radiusY: radius * 0.92, color: gpuColor(palette.secondary, alpha: 0.035 + CGFloat(features.beat) * 0.055))
+        let activePitches = activePitchClasses(features)
+        appendRadial(&mesh.radials, center: center, radiusX: radius * 2.05, radiusY: radius * 2.05, color: gpuColor(harmonicColor(slot: 4, progress: 0.80, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.022 + CGFloat(features.loudness) * 0.035))
+        appendRadial(&mesh.radials, center: center, radiusX: radius * 0.92, radiusY: radius * 0.92, color: gpuColor(harmonicColor(slot: 1, progress: 0.30, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.035 + CGFloat(features.beat) * 0.055))
         let points = max(160, Int(160 + settings.visualizerDensity * 80))
         for orbit in 0..<3 {
             var ring: [SIMD2<Float>] = []
@@ -297,11 +350,11 @@ struct VisualizerEngine {
                 let r = radius * (1 + CGFloat(orbit - 1) * 0.105) + displacement + slowDrift
                 ring.append(SIMD2(Float(center.x + cos(angle) * r), Float(center.y + sin(angle) * r)))
             }
-            let color = orbit == 0 ? palette.accent : (orbit == 1 ? palette.secondary : palette.cool)
+            let color = harmonicColor(slot: orbit, progress: CGFloat(orbit) / 2, activePitches: activePitches, features: features, settings: settings, palette: palette)
             appendPolyline(&mesh.additive, points: ring, width: Float((8 + glow * 7) * renderScale), color: gpuColor(color, alpha: orbit == 0 ? 0.060 : 0.030), closed: true)
             appendPolyline(&mesh.additive, points: ring, width: Float((orbit == 0 ? 1.8 : 1.05) * renderScale), color: gpuColor(color, alpha: orbit == 0 ? 0.62 : 0.24), closed: true)
         }
-        appendOrbitHighlights(&mesh, center: center, radius: radius, features: features, palette: palette, time: time, renderScale: renderScale)
+        appendOrbitHighlights(&mesh, center: center, radius: radius, features: features, settings: settings, palette: palette, time: time, renderScale: renderScale)
     }
 
     private func appendZenRipple(_ mesh: inout VisualizerMesh, center: CGPoint, size: CGSize, features: AudioFrameFeatures, settings: RenderSettings, palette: VisualPalette, time: Double, renderScale: CGFloat) {
@@ -310,14 +363,15 @@ struct VisualizerEngine {
         let values = features.spectrum
         let glow = CGFloat(settings.visualizerGlow)
         guard !values.isEmpty else { return }
-        appendRadial(&mesh.radials, center: center, radiusX: baseRadius * 3.4, radiusY: baseRadius * 1.75, color: gpuColor(palette.cool, alpha: 0.022 + CGFloat(features.loudness) * 0.038))
-        appendRadial(&mesh.radials, center: center, radiusX: baseRadius * 1.45, radiusY: baseRadius * 0.68, color: gpuColor(palette.accent, alpha: 0.035 + CGFloat(features.bass) * 0.055))
+        let activePitches = activePitchClasses(features)
+        appendRadial(&mesh.radials, center: center, radiusX: baseRadius * 3.4, radiusY: baseRadius * 1.75, color: gpuColor(harmonicColor(slot: 4, progress: 0.84, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.022 + CGFloat(features.loudness) * 0.038))
+        appendRadial(&mesh.radials, center: center, radiusX: baseRadius * 1.45, radiusY: baseRadius * 0.68, color: gpuColor(harmonicColor(slot: 0, progress: 0.16, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.035 + CGFloat(features.bass) * 0.055))
         let ringCount = max(5, Int(5 + settings.visualizerDensity * 3))
         for ring in 0..<ringCount {
             let ringProgress = CGFloat(ring) / CGFloat(max(1, ringCount - 1))
             let travel = (CGFloat(time) * 0.055 + ringProgress).truncatingRemainder(dividingBy: 1)
             let radius = baseRadius + travel * minimum * 0.20 + CGFloat(features.bass) * minimum * 0.012 * settings.visualizerStrength
-            let ringColor = palette.tone(at: 0.18 + ringProgress * 0.72)
+            let ringColor = harmonicColor(slot: ring, progress: 0.18 + ringProgress * 0.72, activePitches: activePitches, features: features, settings: settings, palette: palette)
             var points: [SIMD2<Float>] = []
             let pointCount = 180
             points.reserveCapacity(pointCount + 1)
@@ -347,7 +401,8 @@ struct VisualizerEngine {
         let height = minimum * 0.19 * settings.visualizerStrength
         let curtainCount = max(5, Int(5 + settings.visualizerDensity * 4))
         let pointCount = 112
-        appendRadial(&mesh.radials, center: center, radiusX: width * 0.56, radiusY: height * 1.75, color: gpuColor(palette.cool, alpha: 0.028 + CGFloat(features.loudness) * 0.045))
+        let activePitches = activePitchClasses(features)
+        appendRadial(&mesh.radials, center: center, radiusX: width * 0.56, radiusY: height * 1.75, color: gpuColor(harmonicColor(slot: 4, progress: 0.82, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.028 + CGFloat(features.loudness) * 0.045))
         for curtain in 0..<curtainCount {
             var upper: [SIMD2<Float>] = []
             var lower: [SIMD2<Float>] = []
@@ -369,7 +424,7 @@ struct VisualizerEngine {
                 upper.append(SIMD2(Float(x), Float(base + lift + wave)))
                 lower.append(SIMD2(Float(x), Float(base - lift * (0.24 + layer * 0.12) + wave * 0.34)))
             }
-            let color = palette.ribbon(curtain)
+            let color = harmonicColor(slot: curtain, progress: layer, activePitches: activePitches, features: features, settings: settings, palette: palette)
             appendRibbonFill(&mesh.soft, upper: upper, lower: lower, color: gpuColor(color, alpha: 0.030 + (1 - layer) * 0.040 + CGFloat(features.loudness) * 0.025))
             appendPolyline(&mesh.additive, points: upper, width: Float((6 + CGFloat(settings.visualizerGlow) * 7) * renderScale), color: gpuColor(color, alpha: 0.025 + (1 - layer) * 0.025), closed: false)
             appendPolyline(&mesh.additive, points: upper, width: Float((0.75 + (1 - layer) * 0.75) * renderScale), color: gpuColor(color, alpha: 0.18 + (1 - layer) * 0.22), closed: false)
@@ -383,7 +438,8 @@ struct VisualizerEngine {
         let sides = 6
         let ringCount = max(7, Int(7 + settings.visualizerDensity * 5))
         let travel = (CGFloat(time) * (0.045 + CGFloat(features.loudness) * 0.035)).truncatingRemainder(dividingBy: 1)
-        appendRadial(&mesh.radials, center: center, radiusX: minimum * 0.36, radiusY: minimum * 0.25, color: gpuColor(palette.accent, alpha: 0.020 + CGFloat(features.bass) * 0.045))
+        let activePitches = activePitchClasses(features)
+        appendRadial(&mesh.radials, center: center, radiusX: minimum * 0.36, radiusY: minimum * 0.25, color: gpuColor(harmonicColor(slot: 0, progress: 0.16, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.020 + CGFloat(features.bass) * 0.045))
         for ring in 0..<ringCount {
             let depth = (CGFloat(ring) + travel) / CGFloat(ringCount)
             let source = min(spectrum.count - 1, Int(depth * CGFloat(spectrum.count - 1)))
@@ -397,7 +453,7 @@ struct VisualizerEngine {
                 let frequencyRipple = 1 + spectral * settings.visualizerStrength * (side.isMultiple(of: 2) ? 0.10 : 0.035)
                 polygon.append(SIMD2(Float(center.x + cos(angle) * radius * frequencyRipple), Float(center.y + sin(angle) * radius * 0.68 * frequencyRipple)))
             }
-            let color = palette.tone(at: depth)
+            let color = harmonicColor(slot: ring, progress: depth, activePitches: activePitches, features: features, settings: settings, palette: palette)
             let life = sin(depth * .pi)
             appendPolyline(&mesh.additive, points: polygon, width: Float((7 + CGFloat(settings.visualizerGlow) * 7) * renderScale), color: gpuColor(color, alpha: 0.018 + life * 0.040), closed: true)
             appendPolyline(&mesh.additive, points: polygon, width: Float((0.85 + spectral * 1.1) * renderScale), color: gpuColor(color, alpha: 0.16 + life * 0.34 + CGFloat(features.beat) * 0.08), closed: true)
@@ -410,7 +466,7 @@ struct VisualizerEngine {
                 &mesh.additive,
                 points: [SIMD2(Float(center.x + cos(angle) * inner), Float(center.y + sin(angle) * inner * 0.68)), SIMD2(Float(center.x + cos(angle + 0.30) * outer), Float(center.y + sin(angle + 0.30) * outer * 0.68))],
                 width: Float(max(0.65, renderScale)),
-                color: gpuColor(palette.ribbon(side), alpha: 0.08 + CGFloat(features.beat) * 0.10),
+                color: gpuColor(harmonicColor(slot: side, progress: CGFloat(side) / CGFloat(sides), activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.08 + CGFloat(features.beat) * 0.10),
                 closed: false
             )
         }
@@ -422,9 +478,10 @@ struct VisualizerEngine {
         let width = size.width * 0.82 * settings.visualizerScale
         let height = min(size.height * 0.28, min(size.width, size.height) * 0.34) * settings.visualizerScale
         let bass = CGFloat(features.bass)
-        appendRadial(&mesh.radials, center: CGPoint(x: center.x - width * 0.18, y: center.y + height * 0.04), radiusX: width * (0.30 + bass * 0.06), radiusY: height * 0.74, color: gpuColor(palette.secondary, alpha: 0.030 + CGFloat(features.loudness) * 0.050))
-        appendRadial(&mesh.radials, center: CGPoint(x: center.x + width * 0.20, y: center.y - height * 0.05), radiusX: width * 0.34, radiusY: height * 0.68, color: gpuColor(palette.cool, alpha: 0.026 + bass * 0.045))
-        appendRadial(&mesh.radials, center: center, radiusX: width * 0.18, radiusY: height * 0.52, color: gpuColor(palette.accent, alpha: 0.040 + CGFloat(features.beat) * 0.060))
+        let activePitches = activePitchClasses(features)
+        appendRadial(&mesh.radials, center: CGPoint(x: center.x - width * 0.18, y: center.y + height * 0.04), radiusX: width * (0.30 + bass * 0.06), radiusY: height * 0.74, color: gpuColor(harmonicColor(slot: 1, progress: 0.28, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.030 + CGFloat(features.loudness) * 0.050))
+        appendRadial(&mesh.radials, center: CGPoint(x: center.x + width * 0.20, y: center.y - height * 0.05), radiusX: width * 0.34, radiusY: height * 0.68, color: gpuColor(harmonicColor(slot: 4, progress: 0.82, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.026 + bass * 0.045))
+        appendRadial(&mesh.radials, center: center, radiusX: width * 0.18, radiusY: height * 0.52, color: gpuColor(harmonicColor(slot: 0, progress: 0.12, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.040 + CGFloat(features.beat) * 0.060))
         let count = max(54, Int(54 + settings.visualizerDensity * 72))
         for index in 0..<count {
             let seed = CGFloat(index)
@@ -439,7 +496,7 @@ struct VisualizerEngine {
             let x = center.x + cos(angle) * width * orbit
             let y = center.y + sin(angle * 1.07) * height * orbit + sin(CGFloat(time) * 0.10 + seed) * height * 0.025
             let radius = (0.75 + pseudo(seed * 2.41) * 1.8 + energy * 3.2 + CGFloat(features.high) * 1.4) * renderScale
-            let color = palette.ribbon(index)
+            let color = harmonicColor(slot: index, progress: pseudo(seed * 4.19), activePitches: activePitches, features: features, settings: settings, palette: palette)
             let previousAngle = angle - angularSpeed * 7.0
             let previousOrbit = max(0.02, orbit - lifeSpeed * 1.8)
             let previous = SIMD2(
@@ -459,7 +516,8 @@ struct VisualizerEngine {
         let minimum = min(size.width, size.height)
         let petals = max(10, Int(10 + settings.visualizerDensity * 8))
         let baseRadius = minimum * 0.075 * settings.visualizerScale
-        appendRadial(&mesh.radials, center: center, radiusX: minimum * 0.31, radiusY: minimum * 0.31, color: gpuColor(palette.secondary, alpha: 0.020 + CGFloat(features.loudness) * 0.045))
+        let activePitches = activePitchClasses(features)
+        appendRadial(&mesh.radials, center: center, radiusX: minimum * 0.31, radiusY: minimum * 0.31, color: gpuColor(harmonicColor(slot: 2, progress: 0.5, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.020 + CGFloat(features.loudness) * 0.045))
         for layer in 0..<2 {
             let layerScale: CGFloat = layer == 0 ? 1 : 0.62
             let rotation = CGFloat(time) * (layer == 0 ? 0.025 : -0.038) + CGFloat(layer) * (.pi / CGFloat(petals))
@@ -475,12 +533,12 @@ struct VisualizerEngine {
                 let left = SIMD2(Float(center.x + cos(angle - halfAngle) * outer * 0.70), Float(center.y + sin(angle - halfAngle) * outer * 0.70))
                 let tip = SIMD2(Float(center.x + cos(angle) * outer), Float(center.y + sin(angle) * outer))
                 let right = SIMD2(Float(center.x + cos(angle + halfAngle) * outer * 0.70), Float(center.y + sin(angle + halfAngle) * outer * 0.70))
-                let color = palette.tone(at: p)
+                let color = harmonicColor(slot: petal + layer * petals, progress: p, activePitches: activePitches, features: features, settings: settings, palette: palette)
                 appendPetal(&mesh.soft, inner: innerPoint, left: left, tip: tip, right: right, color: gpuColor(color, alpha: layer == 0 ? 0.060 + energy * 0.055 : 0.035 + energy * 0.035))
                 appendPolyline(&mesh.additive, points: [innerPoint, left, tip, right], width: Float((layer == 0 ? 1.0 : 0.7) * renderScale), color: gpuColor(color, alpha: layer == 0 ? 0.24 + energy * 0.28 : 0.13 + energy * 0.16), closed: true)
             }
         }
-        appendOrbitHighlights(&mesh, center: center, radius: baseRadius * 1.42, features: features, palette: palette, time: time, renderScale: renderScale)
+        appendOrbitHighlights(&mesh, center: center, radius: baseRadius * 1.42, features: features, settings: settings, palette: palette, time: time, renderScale: renderScale)
     }
 
     private func appendStarfield(_ mesh: inout VisualizerMesh, center: CGPoint, size: CGSize, features: AudioFrameFeatures, settings: RenderSettings, palette: VisualPalette, time: Double, renderScale: CGFloat) {
@@ -488,7 +546,8 @@ struct VisualizerEngine {
         guard !spectrum.isEmpty else { return }
         let maximum = hypot(size.width, size.height) * 0.46 * settings.visualizerScale
         let count = max(62, Int(62 + settings.visualizerDensity * 82))
-        appendRadial(&mesh.radials, center: center, radiusX: min(size.width, size.height) * 0.27, radiusY: min(size.width, size.height) * 0.27, color: gpuColor(palette.cool, alpha: 0.018 + CGFloat(features.bass) * 0.040))
+        let activePitches = activePitchClasses(features)
+        appendRadial(&mesh.radials, center: center, radiusX: min(size.width, size.height) * 0.27, radiusY: min(size.width, size.height) * 0.27, color: gpuColor(harmonicColor(slot: 4, progress: 0.84, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.018 + CGFloat(features.bass) * 0.040))
         for index in 0..<count {
             let seed = CGFloat(index)
             // Keep trajectory speed independent from instantaneous loudness so
@@ -509,7 +568,7 @@ struct VisualizerEngine {
             let start = SIMD2(Float(center.x + cos(startAngle) * inner), Float(center.y + sin(startAngle) * inner * 0.72))
             let middle = SIMD2(Float(center.x + cos(middleAngle) * middleRadius), Float(center.y + sin(middleAngle) * middleRadius * 0.72))
             let end = SIMD2(Float(center.x + cos(angle) * radius), Float(center.y + sin(angle) * radius * 0.72))
-            let color = palette.ribbon(index)
+            let color = harmonicColor(slot: index, progress: depth, activePitches: activePitches, features: features, settings: settings, palette: palette)
             appendPolyline(&mesh.additive, points: [start, middle, end], width: Float((5 + CGFloat(settings.visualizerGlow) * 6) * renderScale * max(0.35, depth)), color: gpuColor(color, alpha: lifeFade * (0.010 + depth * 0.036 + energy * 0.024)), closed: false)
             appendPolyline(&mesh.additive, points: [start, middle, end], width: Float(max(0.55, (0.55 + depth * 1.15) * renderScale)), color: gpuColor(color, alpha: lifeFade * (0.08 + depth * 0.30 + energy * 0.16 + CGFloat(features.transient) * 0.10)), closed: false)
             if index.isMultiple(of: 3) {
@@ -525,11 +584,12 @@ struct VisualizerEngine {
         let spectrum = features.spectrum
         let glow = CGFloat(settings.visualizerGlow)
         guard !spectrum.isEmpty else { return }
+        let activePitches = activePitchClasses(features)
         for ribbon in 0..<5 {
             var points: [SIMD2<Float>] = []
             points.reserveCapacity(161)
             let phase = CGFloat(ribbon) * 0.62
-            let color = palette.ribbon(ribbon)
+            let color = harmonicColor(slot: ribbon, progress: CGFloat(ribbon) / 4, activePitches: activePitches, features: features, settings: settings, palette: palette)
             for point in 0...160 {
                 let p = CGFloat(point) / 160
                 let source = min(spectrum.count - 1, Int(p * CGFloat(spectrum.count - 1)))
@@ -548,13 +608,15 @@ struct VisualizerEngine {
         appendParticles(&mesh, center: center, radius: width * 0.48, features: features, settings: settings, palette: palette, time: time, renderScale: renderScale)
     }
 
-    private func appendOrbitHighlights(_ mesh: inout VisualizerMesh, center: CGPoint, radius: CGFloat, features: AudioFrameFeatures, palette: VisualPalette, time: Double, renderScale: CGFloat) {
+    private func appendOrbitHighlights(_ mesh: inout VisualizerMesh, center: CGPoint, radius: CGFloat, features: AudioFrameFeatures, settings: RenderSettings, palette: VisualPalette, time: Double, renderScale: CGFloat) {
+        let activePitches = activePitchClasses(features)
         for index in 0..<3 {
             let angle = CGFloat(time) * (0.08 + CGFloat(index) * 0.018) + CGFloat(index) * (.pi * 2 / 3)
             let orbit = radius * (0.86 + CGFloat(index) * 0.10)
             let point = CGPoint(x: center.x + cos(angle) * orbit, y: center.y + sin(angle) * orbit)
             let dot = (2.2 + CGFloat(features.high) * 2.2 + CGFloat(features.beat) * 1.8) * renderScale
-            appendRadial(&mesh.radials, center: point, radiusX: dot * 4.2, radiusY: dot * 4.2, color: gpuColor(palette.ribbon(index), alpha: 0.055 + CGFloat(features.high) * 0.075))
+            let color = harmonicColor(slot: index, progress: CGFloat(index) / 2, activePitches: activePitches, features: features, settings: settings, palette: palette)
+            appendRadial(&mesh.radials, center: point, radiusX: dot * 4.2, radiusY: dot * 4.2, color: gpuColor(color, alpha: 0.055 + CGFloat(features.high) * 0.075))
             appendRadial(&mesh.radials, center: point, radiusX: dot, radiusY: dot, color: gpuColor(palette.highlight, alpha: 0.28 + CGFloat(features.beat) * 0.18))
         }
     }
@@ -564,6 +626,7 @@ struct VisualizerEngine {
         let intensity = CGFloat(features.high * 0.62 + features.beat * 0.38)
         guard intensity > 0.025 else { return }
         let glow = CGFloat(settings.visualizerGlow)
+        let activePitches = activePitchClasses(features)
         for index in 0..<count {
             let seed = CGFloat(index)
             let angle = seed * 2.399963 + CGFloat(time) * (0.025 + CGFloat(index % 5) * 0.006)
@@ -571,7 +634,7 @@ struct VisualizerEngine {
             let orbit = radius * (0.25 + pseudo(seed * 4.37) * 0.75) * audioPush
             let x = center.x + cos(angle) * orbit
             let y = center.y + sin(angle * 1.13) * orbit * 0.58
-            let color = palette.ribbon(index)
+            let color = harmonicColor(slot: index, progress: CGFloat(index) / CGFloat(max(1, count - 1)), activePitches: activePitches, features: features, settings: settings, palette: palette)
             let dot = (1.0 + pseudo(seed * 8.91) * 3.2 + intensity * 2.4) * renderScale
             let halo = dot * (2.2 + glow * 1.4)
             appendCircle(&mesh.additive, center: SIMD2(Float(x), Float(y)), radius: Float(halo / 2), color: gpuColor(color, alpha: 0.08 + intensity * 0.12))
@@ -592,80 +655,194 @@ struct VisualizerEngine {
         guard !values.isEmpty else { return }
         let minimum = min(size.width, size.height)
         let scale = CGFloat(settings.visualizerScale)
-        let inset = max(8 * renderScale, minimum * (0.030 + max(0, 1.05 - scale) * 0.035))
+        let inset = max(12 * renderScale, minimum * (0.042 + max(0, 1.05 - scale) * 0.040))
         let center = SIMD2<Float>(Float(size.width * 0.5), Float(size.height * 0.5))
         let halfWidth = max(minimum * 0.18, size.width * 0.5 - inset)
         let halfHeight = max(minimum * 0.18, size.height * 0.5 - inset)
-        let pointCount = max(260, Int(260 + settings.visualizerDensity * 180))
+        let pointCount = max(280, Int(280 + settings.visualizerDensity * 160))
         let glow = CGFloat(settings.visualizerGlow)
         let response = CGFloat(settings.visualizerStrength)
-        let drift = CGFloat(time) * (0.010 + CGFloat(features.buildup) * 0.012)
+        let drift = CGFloat(time) * (0.018 + CGFloat(features.buildup) * 0.018)
+        var outerField: [SIMD2<Float>] = []
+        var innerField: [SIMD2<Float>] = []
+        var energyCrest: [SIMD2<Float>] = []
+        var ribbonEnergy: [CGFloat] = []
+        var ribbonColors: [CGColor] = []
+        let activePitches = activePitchClasses(features)
+        outerField.reserveCapacity(pointCount + 1)
+        innerField.reserveCapacity(pointCount + 1)
+        energyCrest.reserveCapacity(pointCount + 1)
+        ribbonEnergy.reserveCapacity(pointCount + 1)
+        ribbonColors.reserveCapacity(pointCount + 1)
+
+        // Build a translucent energy field, not a stroked rectangle. Each side
+        // receives the whole spectrum so portrait and landscape frames remain
+        // equally musical, while the travelling phase prevents rigid symmetry.
+        for index in 0...pointCount {
+            let progress = CGFloat(index) / CGFloat(pointCount)
+            let sample = borderSample(progress: progress, center: center, halfWidth: halfWidth, halfHeight: halfHeight)
+            let sideProgress = (progress * 4 + drift).truncatingRemainder(dividingBy: 1)
+            let folded = abs(sideProgress - 0.5) * 2
+            let source = min(values.count - 1, Int(pow(folded, 1.28) * CGFloat(values.count - 1)))
+            let spectral = CGFloat(values[source])
+            let texture = sin(progress * .pi * 16 + CGFloat(time) * 0.28)
+                + sin(progress * .pi * 31 - CGFloat(time) * 0.19) * 0.45
+            let shimmer = max(0, texture) * CGFloat(features.high) * minimum * 0.0018
+            let pulse = pow(max(0, spectral), 1.12) * minimum * 0.050 * response
+            let transient = CGFloat(features.transient) * minimum * 0.0045
+            let breath = (0.5 + 0.5 * sin(progress * .pi * 8 + CGFloat(time) * 0.15))
+                * CGFloat(features.mid) * minimum * 0.0035
+            let outerDistance = minimum * (0.004 + CGFloat(features.bass) * 0.003)
+            let innerDistance = minimum * 0.032 + pulse + breath + transient + shimmer
+            let crestDistance = minimum * 0.008 + pulse * 0.58 + shimmer * 0.55
+            outerField.append(sample.point + sample.normal * Float(outerDistance))
+            innerField.append(sample.point - sample.normal * Float(innerDistance))
+            energyCrest.append(sample.point - sample.normal * Float(crestDistance))
+            let harmonicSlot = Int(progress * CGFloat(max(1, activePitches.count)) * 2)
+            let harmonicEnergy: CGFloat
+            if !activePitches.isEmpty, features.chroma.count >= 12 {
+                harmonicEnergy = CGFloat(features.chroma[activePitches[harmonicSlot % activePitches.count]])
+            } else {
+                harmonicEnergy = 0
+            }
+            ribbonEnergy.append(min(1, 0.14 + spectral * 0.48 + harmonicEnergy * 0.30 + CGFloat(features.beat) * 0.08))
+            ribbonColors.append(harmonicColor(slot: harmonicSlot, progress: progress, activePitches: activePitches, features: features, settings: settings, palette: palette))
+        }
+
+        appendGradientRibbon(
+            &mesh.soft,
+            outer: outerField,
+            inner: innerField,
+            intensities: ribbonEnergy,
+            colors: ribbonColors,
+            baseAlpha: 0.035 + glow * 0.022,
+            audioAlpha: 0.105 + CGFloat(features.climax) * 0.045
+        )
+        appendPolyline(
+            &mesh.additive,
+            points: energyCrest,
+            width: Float((22 + glow * 26) * renderScale),
+            color: gpuColor(harmonicColor(slot: 4, progress: 0.78, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.018 + CGFloat(features.energy) * 0.026),
+            closed: true
+        )
+        for cloud in 0..<14 {
+            let progress = (CGFloat(cloud) / 14 + CGFloat(time) * (0.006 + CGFloat(cloud % 3) * 0.0015))
+                .truncatingRemainder(dividingBy: 1)
+            let sample = borderSample(progress: progress, center: center, halfWidth: halfWidth, halfHeight: halfHeight)
+            let source = min(values.count - 1, Int(pseudo(CGFloat(cloud) * 4.83) * CGFloat(values.count - 1)))
+            let spectral = CGFloat(values[source])
+            let inward = minimum * (0.025 + spectral * 0.030)
+            let point = sample.point - sample.normal * Float(inward)
+            let liesOnVerticalEdge = abs(sample.normal.x) > abs(sample.normal.y)
+            let longRadius = minimum * (0.075 + spectral * 0.040 + CGFloat(features.buildup) * 0.018)
+            let shortRadius = minimum * (0.020 + spectral * 0.018)
+            appendRadial(
+                &mesh.radials,
+                center: CGPoint(x: CGFloat(point.x), y: CGFloat(point.y)),
+                radiusX: liesOnVerticalEdge ? shortRadius : longRadius,
+                radiusY: liesOnVerticalEdge ? longRadius : shortRadius,
+                color: gpuColor(harmonicColor(slot: cloud, progress: progress, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: glow * (0.018 + spectral * 0.038 + CGFloat(features.energy) * 0.018))
+            )
+        }
+
+        for fleck in 0..<42 {
+            let seed = CGFloat(fleck)
+            let progress = (pseudo(seed * 6.37) + CGFloat(time) * (0.006 + pseudo(seed * 2.11) * 0.012))
+                .truncatingRemainder(dividingBy: 1)
+            let sample = borderSample(progress: progress, center: center, halfWidth: halfWidth, halfHeight: halfHeight)
+            let source = min(values.count - 1, Int(pseudo(seed * 8.71) * CGFloat(values.count - 1)))
+            let spectral = CGFloat(values[source])
+            let depth = minimum * (0.010 + pseudo(seed * 3.29) * (0.030 + spectral * 0.045))
+            let point = sample.point - sample.normal * Float(depth)
+            let radius = (0.8 + pseudo(seed * 5.03) * 1.8 + spectral * 2.6) * renderScale
+            let color = harmonicColor(slot: fleck, progress: progress, activePitches: activePitches, features: features, settings: settings, palette: palette)
+            appendRadial(&mesh.radials, center: CGPoint(x: CGFloat(point.x), y: CGFloat(point.y)), radiusX: radius * 4.5, radiusY: radius * 4.5, color: gpuColor(color, alpha: 0.018 + spectral * 0.045))
+            appendRadial(&mesh.radials, center: CGPoint(x: CGFloat(point.x), y: CGFloat(point.y)), radiusX: radius, radiusY: radius, color: gpuColor(VisualPalette.mix(color, palette.highlight, 0.32), alpha: 0.10 + spectral * 0.24))
+        }
+
+        // Fine spectral filaments turn the frame into a responsive membrane.
+        // They remain translucent and point inward, visually binding the edge
+        // field to the image instead of creating a bright frame on top of it.
+        let filamentStep = max(3, Int(5 - settings.visualizerDensity * 2))
+        for index in stride(from: 0, to: pointCount, by: filamentStep) {
+            let progress = CGFloat(index) / CGFloat(pointCount)
+            let sample = borderSample(progress: progress, center: center, halfWidth: halfWidth, halfHeight: halfHeight)
+            let local = (progress * 4 + drift * 0.7).truncatingRemainder(dividingBy: 1)
+            let folded = abs(local - 0.5) * 2
+            let source = min(values.count - 1, Int(pow(folded, 1.35) * CGFloat(values.count - 1)))
+            let spectral = CGFloat(values[source])
+            let length = minimum * (0.014 + pow(spectral, 1.18) * 0.072 * response + CGFloat(features.beat) * 0.008)
+            let start = sample.point - sample.normal * Float(minimum * 0.006)
+            let end = sample.point - sample.normal * Float(length)
+            let color = harmonicColor(slot: index / max(1, filamentStep), progress: progress, activePitches: activePitches, features: features, settings: settings, palette: palette)
+            appendPolyline(
+                &mesh.additive,
+                points: [start, end],
+                width: Float((5 + glow * 5) * renderScale),
+                color: gpuColor(color, alpha: 0.012 + spectral * 0.030),
+                closed: false
+            )
+            appendPolyline(
+                &mesh.additive,
+                points: [start, end],
+                width: Float(max(0.55, (0.65 + spectral * 0.75) * renderScale)),
+                color: gpuColor(color, alpha: 0.080 + spectral * 0.38 + CGFloat(features.high) * 0.07),
+                closed: false
+            )
+        }
 
         for corner in 0..<4 {
             let x = corner % 2 == 0 ? inset : size.width - inset
             let y = corner < 2 ? inset : size.height - inset
-            let color = palette.ribbon(corner)
+            let color = harmonicColor(slot: corner, progress: CGFloat(corner) / 4, activePitches: activePitches, features: features, settings: settings, palette: palette)
             appendRadial(
                 &mesh.radials,
                 center: CGPoint(x: x, y: y),
                 radiusX: minimum * (0.18 + CGFloat(features.bass) * 0.045),
                 radiusY: minimum * (0.18 + CGFloat(features.mid) * 0.035),
-                color: gpuColor(color, alpha: glow * (0.020 + CGFloat(features.loudness) * 0.028 + CGFloat(features.climax) * 0.025))
+                color: gpuColor(color, alpha: glow * (0.025 + CGFloat(features.loudness) * 0.032 + CGFloat(features.climax) * 0.030))
             )
         }
 
-        for layer in 0..<4 {
-            var points: [SIMD2<Float>] = []
-            points.reserveCapacity(pointCount)
-            let layerPhase = CGFloat(layer) * 0.073
-            for index in 0..<pointCount {
-                let progress = CGFloat(index) / CGFloat(pointCount)
-                let angle = (progress + drift + layerPhase) * .pi * 2 - .pi / 2
-                let cosine = cos(angle)
-                let sine = sin(angle)
-                let exponent: CGFloat = 0.36
-                let shapedX = cosine.sign == .minus ? -pow(abs(cosine), exponent) : pow(abs(cosine), exponent)
-                let shapedY = sine.sign == .minus ? -pow(abs(sine), exponent) : pow(abs(sine), exponent)
-                let base = SIMD2<Float>(
-                    center.x + Float(shapedX * halfWidth),
-                    center.y + Float(shapedY * halfHeight)
-                )
-                var outward = base - center
-                let length = max(0.001, simd_length(outward))
-                outward /= length
-                let spectralProgress = (progress + layerPhase).truncatingRemainder(dividingBy: 1)
-                let mirrored = spectralProgress <= 0.5 ? spectralProgress * 2 : (1 - spectralProgress) * 2
-                let source = min(values.count - 1, Int(pow(mirrored, 1.22) * CGFloat(values.count - 1)))
-                let spectral = CGFloat(values[source])
-                let pulse = pow(max(0, spectral), 1.16) * minimum * (0.018 + CGFloat(layer) * 0.0035) * response
-                let breathing = sin(angle * CGFloat(2 + layer) + CGFloat(time) * (0.16 + CGFloat(layer) * 0.025))
-                    * minimum * 0.0025 * CGFloat(features.mid)
-                let beat = CGFloat(features.beat + features.transient * 0.45) * minimum * 0.0045 * (layer == 0 ? 1 : 0.45)
-                points.append(base - outward * Float(pulse + breathing + beat + CGFloat(layer) * 1.8 * renderScale))
+        // Several independent light packets orbit with inertia. Their broad
+        // tails and small hot cores add direction and depth without flashing
+        // the entire border on every transient.
+        for packet in 0..<7 {
+            let speed = 0.018 + CGFloat(packet % 3) * 0.004 + CGFloat(features.buildup) * 0.006
+            let head = (CGFloat(time) * speed + CGFloat(packet) / 7 + CGFloat(features.sectionProgress) * 0.035)
+                .truncatingRemainder(dividingBy: 1)
+            var trail: [SIMD2<Float>] = []
+            let trailCount = 18
+            trail.reserveCapacity(trailCount + 1)
+            for step in stride(from: trailCount, through: 0, by: -1) {
+                var progress = head - CGFloat(step) * (0.0028 + CGFloat(settings.visualizerTrail) * 0.0018)
+                if progress < 0 { progress += 1 }
+                let sample = borderSample(progress: progress, center: center, halfWidth: halfWidth, halfHeight: halfHeight)
+                let source = min(values.count - 1, Int(pseudo(CGFloat(packet) * 3.71) * CGFloat(values.count - 1)))
+                let energy = CGFloat(values[source])
+                let distance = minimum * (0.010 + energy * 0.022 * response)
+                trail.append(sample.point - sample.normal * Float(distance))
             }
-            let color = palette.ribbon(layer)
-            let wideAlpha = 0.018 + CGFloat(features.loudness) * 0.020 + CGFloat(features.climax) * 0.018
+            let packetColor = harmonicColor(slot: packet, progress: head, activePitches: activePitches, features: features, settings: settings, palette: palette)
             appendPolyline(
                 &mesh.additive,
-                points: points,
-                width: Float((18 + glow * 20 + CGFloat(layer) * 3) * renderScale),
-                color: gpuColor(color, alpha: wideAlpha),
-                closed: true
-            )
-            appendPolyline(
-                &mesh.soft,
-                points: points,
-                width: Float((4.8 + CGFloat(layer) * 1.2) * renderScale),
-                color: gpuColor(color, alpha: 0.055 + CGFloat(features.energy) * 0.050),
-                closed: true
+                points: trail,
+                width: Float((13 + glow * 14) * renderScale),
+                color: gpuColor(packetColor, alpha: 0.035 + CGFloat(features.energy) * 0.045),
+                closed: false
             )
             appendPolyline(
                 &mesh.additive,
-                points: points,
-                width: Float((layer == 0 ? 1.35 : 0.72) * renderScale),
-                color: gpuColor(layer == 0 ? palette.highlight : color, alpha: layer == 0 ? 0.34 + CGFloat(features.high) * 0.18 : 0.12),
-                closed: true
+                points: trail,
+                width: Float(1.5 * renderScale),
+                color: gpuColor(VisualPalette.mix(packetColor, palette.highlight, 0.42), alpha: 0.24 + CGFloat(features.high) * 0.22),
+                closed: false
             )
+            if let tip = trail.last {
+                let radius = (2.2 + CGFloat(features.high) * 2.8 + CGFloat(features.beat) * 2.0) * renderScale
+                appendRadial(&mesh.radials, center: CGPoint(x: CGFloat(tip.x), y: CGFloat(tip.y)), radiusX: radius * 6, radiusY: radius * 6, color: gpuColor(packetColor, alpha: 0.045 + CGFloat(features.energy) * 0.045))
+                appendRadial(&mesh.radials, center: CGPoint(x: CGFloat(tip.x), y: CGFloat(tip.y)), radiusX: radius, radiusY: radius, color: gpuColor(palette.highlight, alpha: 0.28 + CGFloat(features.beat) * 0.16))
+            }
         }
 
         let edgeCenters = [
@@ -677,8 +854,83 @@ struct VisualizerEngine {
         for (index, point) in edgeCenters.enumerated() {
             let band = CGFloat(features.spectrum[min(values.count - 1, index * max(1, values.count / 4))])
             let radius = minimum * (0.028 + band * 0.034 + CGFloat(features.beat) * 0.008)
-            appendRadial(&mesh.radials, center: point, radiusX: radius * 2.8, radiusY: radius, color: gpuColor(palette.ribbon(index + 1), alpha: 0.035 + band * 0.065))
+            let color = harmonicColor(slot: index + 1, progress: CGFloat(index) / 4, activePitches: activePitches, features: features, settings: settings, palette: palette)
+            appendRadial(&mesh.radials, center: point, radiusX: radius * 2.8, radiusY: radius, color: gpuColor(color, alpha: 0.035 + band * 0.065))
         }
+    }
+
+    private func activePitchClasses(_ features: AudioFrameFeatures) -> [Int] {
+        guard features.tonalConfidence > 0.045, features.chroma.count >= 12 else { return [] }
+        let ranked = (0..<12).sorted { features.chroma[$0] > features.chroma[$1] }
+        guard let strongest = ranked.first, features.chroma[strongest] > 0.08 else { return [] }
+        let threshold = max(0.10, features.chroma[strongest] * 0.34)
+        return Array(ranked.prefix(4).filter { features.chroma[$0] >= threshold })
+    }
+
+    /// Blends a visualizer's native scene-adapted palette with the currently
+    /// sounding scale degrees. Every visual form chooses its own slot and
+    /// progress, so the shared harmony stays musical without making all
+    /// visualizers look like the same rainbow effect.
+    private func harmonicColor(
+        slot: Int,
+        progress: CGFloat,
+        activePitches: [Int],
+        features: AudioFrameFeatures,
+        settings: RenderSettings,
+        palette: VisualPalette
+    ) -> CGColor {
+        let fallback = slot.isMultiple(of: 2) ? palette.tone(at: progress) : palette.ribbon(slot)
+        guard settings.sevenColorFlowEnabled, !activePitches.isEmpty else { return fallback }
+        let pitchClass = activePitches[abs(slot) % activePitches.count]
+        let rainbow = sevenToneColor(pitchClass: pitchClass, root: features.tonalRoot, mode: features.tonalMode)
+        let confidence = CGFloat(min(1, max(0, features.tonalConfidence)))
+        let amount = CGFloat(settings.sevenColorFlowIntensity) * (0.34 + confidence * 0.56)
+        return VisualPalette.mix(fallback, rainbow, min(0.90, amount))
+    }
+
+    private func sevenToneColor(pitchClass: Int, root: Int, mode: Int) -> CGColor {
+        let colors = [
+            CGColor(red: 1.00, green: 0.20, blue: 0.27, alpha: 1),
+            CGColor(red: 1.00, green: 0.47, blue: 0.12, alpha: 1),
+            CGColor(red: 0.98, green: 0.80, blue: 0.17, alpha: 1),
+            CGColor(red: 0.20, green: 0.91, blue: 0.49, alpha: 1),
+            CGColor(red: 0.10, green: 0.83, blue: 0.95, alpha: 1),
+            CGColor(red: 0.27, green: 0.49, blue: 1.00, alpha: 1),
+            CGColor(red: 0.70, green: 0.34, blue: 1.00, alpha: 1)
+        ]
+        let intervals = mode == 0 ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]
+        let relative = ((pitchClass - root) % 12 + 12) % 12
+        for degree in 0..<7 {
+            let lower = intervals[degree]
+            let upper = degree == 6 ? 12 : intervals[degree + 1]
+            if relative >= lower, relative <= upper {
+                let span = max(1, upper - lower)
+                let amount = CGFloat(relative - lower) / CGFloat(span)
+                return VisualPalette.mix(colors[degree], colors[(degree + 1) % 7], amount)
+            }
+        }
+        return colors[0]
+    }
+
+    private func borderSample(
+        progress: CGFloat,
+        center: SIMD2<Float>,
+        halfWidth: CGFloat,
+        halfHeight: CGFloat
+    ) -> (point: SIMD2<Float>, normal: SIMD2<Float>) {
+        let angle = progress * .pi * 2 - .pi / 2
+        let cosine = cos(angle)
+        let sine = sin(angle)
+        let exponent: CGFloat = 0.34
+        let shapedX = cosine.sign == .minus ? -pow(abs(cosine), exponent) : pow(abs(cosine), exponent)
+        let shapedY = sine.sign == .minus ? -pow(abs(sine), exponent) : pow(abs(sine), exponent)
+        let point = SIMD2<Float>(
+            center.x + Float(shapedX * halfWidth),
+            center.y + Float(shapedY * halfHeight)
+        )
+        var normal = point - center
+        normal /= max(0.001, simd_length(normal))
+        return (point, normal)
     }
 
     private func appendRadial(_ vertices: inout [GPUVertex], center: CGPoint, radiusX: CGFloat, radiusY: CGFloat, color: SIMD4<Float>) {
@@ -730,6 +982,37 @@ struct VisualizerEngine {
                 GPUVertex(position: lower[index], uv: .zero, color: color),
                 GPUVertex(position: upper[index + 1], uv: .zero, color: color),
                 GPUVertex(position: lower[index + 1], uv: .zero, color: color)
+            ])
+        }
+    }
+
+    private func appendGradientRibbon(
+        _ vertices: inout [GPUVertex],
+        outer: [SIMD2<Float>],
+        inner: [SIMD2<Float>],
+        intensities: [CGFloat],
+        colors: [CGColor],
+        baseAlpha: CGFloat,
+        audioAlpha: CGFloat
+    ) {
+        guard outer.count == inner.count,
+              outer.count == intensities.count,
+              outer.count == colors.count,
+              outer.count > 1 else { return }
+        for index in 0..<(outer.count - 1) {
+            let colorA = colors[index]
+            let colorB = colors[index + 1]
+            let outerA = gpuColor(colorA, alpha: baseAlpha * 0.12 + intensities[index] * audioAlpha * 0.10)
+            let outerB = gpuColor(colorB, alpha: baseAlpha * 0.12 + intensities[index + 1] * audioAlpha * 0.10)
+            let innerA = gpuColor(colorA, alpha: baseAlpha * 0.24 + intensities[index] * audioAlpha * 0.78)
+            let innerB = gpuColor(colorB, alpha: baseAlpha * 0.24 + intensities[index + 1] * audioAlpha * 0.78)
+            vertices.append(contentsOf: [
+                GPUVertex(position: outer[index], uv: .zero, color: outerA),
+                GPUVertex(position: inner[index], uv: .zero, color: innerA),
+                GPUVertex(position: inner[index + 1], uv: .zero, color: innerB),
+                GPUVertex(position: outer[index], uv: .zero, color: outerA),
+                GPUVertex(position: inner[index + 1], uv: .zero, color: innerB),
+                GPUVertex(position: outer[index + 1], uv: .zero, color: outerB)
             ])
         }
     }

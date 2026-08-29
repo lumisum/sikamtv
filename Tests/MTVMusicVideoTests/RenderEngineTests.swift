@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import CoreImage
 import CoreVideo
+import simd
 import XCTest
 @testable import MTVMusicVideo
 
@@ -26,6 +27,7 @@ final class RenderEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(settings.backgroundTransitionDuration, 1.0)
         XCTAssertEqual(settings.introDuration, 12)
         XCTAssertEqual(settings.introTitleSize, 72)
+        XCTAssertLessThanOrEqual(settings.subjectEdgeLight, 0.15)
     }
 
     func testTemplatesDoNotTintTheBackgroundUnlessOverlayIsEnabled() throws {
@@ -187,6 +189,101 @@ final class RenderEngineTests: XCTestCase {
                 let difference = sparseAverageColorDifference(rendered[first].1, rendered[second].1)
                 XCTAssertGreaterThan(difference, 0.002, "\(rendered[first].0.rawValue) and \(rendered[second].0.rawValue) must remain visually distinct")
             }
+        }
+    }
+
+    func testBorderVisualizerBuildsALayeredEnergyFieldInsteadOfASingleStroke() {
+        let features = AudioFrameFeatures(
+            amplitude: 0.62,
+            loudness: 0.68,
+            bass: 0.78,
+            mid: 0.59,
+            high: 0.51,
+            beat: 0.82,
+            spectrum: (0..<96).map { 0.18 + sin(Float($0) * 0.19) * 0.14 + Float($0 % 11) * 0.035 },
+            waveform: (0..<128).map { sin(Float($0) * 0.18) * 0.76 },
+            energy: 0.72,
+            transient: 0.66,
+            buildup: 0.58,
+            climax: 0.42,
+            quiet: 0.04,
+            warmth: 0.52,
+            sectionProgress: 0.38
+        )
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.visualizer = .border
+        let mesh = VisualizerEngine().mesh(
+            kind: .border,
+            size: CGSize(width: 960, height: 540),
+            features: features,
+            settings: settings,
+            time: 1.4,
+            palette: settings.template.palette,
+            staticBackground: true
+        )
+        XCTAssertGreaterThan(mesh.soft.count, 2_000, "Border mode needs a translucent frequency membrane")
+        XCTAssertGreaterThan(mesh.radials.count, 500, "Border mode needs moving glow clouds and light particles")
+        XCTAssertGreaterThan(mesh.additive.count, 4_500, "Border mode needs filaments and independent light trails")
+    }
+
+    func testSevenColorFlowMapsDifferentScaleDegreesAcrossEveryVisualizer() {
+        func features(pitchClass: Int) -> AudioFrameFeatures {
+            var chroma = [Float](repeating: 0.04, count: 12)
+            chroma[pitchClass] = 1
+            return AudioFrameFeatures(
+                amplitude: 0.62,
+                loudness: 0.68,
+                bass: 0.72,
+                mid: 0.58,
+                high: 0.46,
+                beat: 0.52,
+                spectrum: Array(repeating: 0.48, count: 96),
+                waveform: (0..<128).map { sin(Float($0) * 0.16) * 0.58 },
+                energy: 0.64,
+                transient: 0.38,
+                buildup: 0.42,
+                climax: 0.36,
+                quiet: 0.08,
+                warmth: 0.56,
+                sectionProgress: 0.34,
+                chroma: chroma,
+                tonalConfidence: 0.92,
+                tonalRoot: 0,
+                tonalMode: 1
+            )
+        }
+
+        func averageColor(_ mesh: VisualizerMesh) -> SIMD3<Float> {
+            let vertices = mesh.soft + mesh.additive + mesh.radials
+            var total = SIMD3<Float>.zero
+            var weight: Float = 0
+            for vertex in vertices where vertex.color.w > 0.001 {
+                let alpha = vertex.color.w
+                total += SIMD3(vertex.color.x, vertex.color.y, vertex.color.z) / alpha * alpha
+                weight += alpha
+            }
+            return total / max(0.001, weight)
+        }
+
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.sevenColorFlowIntensity = 1
+        let engine = VisualizerEngine()
+        let size = CGSize(width: 960, height: 540)
+        for kind in VisualizerKind.allCases {
+            settings.visualizer = kind
+            settings.sevenColorFlowEnabled = true
+            let doMesh = engine.mesh(kind: kind, size: size, features: features(pitchClass: 0), settings: settings, time: 1, palette: settings.template.palette, staticBackground: true)
+            let laMesh = engine.mesh(kind: kind, size: size, features: features(pitchClass: 9), settings: settings, time: 1, palette: settings.template.palette, staticBackground: true)
+            let enabledDifference = simd_length(averageColor(doMesh) - averageColor(laMesh))
+
+            settings.sevenColorFlowEnabled = false
+            let disabledDo = engine.mesh(kind: kind, size: size, features: features(pitchClass: 0), settings: settings, time: 1, palette: settings.template.palette, staticBackground: true)
+            let disabledLa = engine.mesh(kind: kind, size: size, features: features(pitchClass: 9), settings: settings, time: 1, palette: settings.template.palette, staticBackground: true)
+            let disabledDifference = simd_length(averageColor(disabledDo) - averageColor(disabledLa))
+
+            XCTAssertGreaterThan(enabledDifference, disabledDifference + 0.06, "\(kind.title) should respond visibly to the sounding scale degree")
         }
     }
 

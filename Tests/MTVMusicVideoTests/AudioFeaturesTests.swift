@@ -35,6 +35,8 @@ final class AudioFeaturesTests: XCTestCase {
         settings.visualizerIntegration = 0.67
         settings.visualizerTrail = 0.41
         settings.musicAwareness = 0.73
+        settings.sevenColorFlowEnabled = false
+        settings.sevenColorFlowIntensity = 0.43
         settings.backgroundMotionStyle = .liquid
         settings.backgroundLife = 0.77
         settings.smartBlurEnabled = false
@@ -64,6 +66,8 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.visualizerIntegration, RenderSettings().visualizerIntegration)
         XCTAssertEqual(settings.visualizerTrail, RenderSettings().visualizerTrail)
         XCTAssertEqual(settings.musicAwareness, RenderSettings().musicAwareness)
+        XCTAssertTrue(settings.sevenColorFlowEnabled)
+        XCTAssertEqual(settings.sevenColorFlowIntensity, RenderSettings().sevenColorFlowIntensity)
         XCTAssertEqual(settings.backgroundMotionStyle, RenderSettings().backgroundMotionStyle)
         XCTAssertEqual(settings.backgroundLife, RenderSettings().backgroundLife)
         XCTAssertEqual(settings.backgroundOverlayOpacity, 0)
@@ -126,6 +130,22 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(result.transients.count, result.amplitudes.count)
         XCTAssertGreaterThan(result.transients.max() ?? 0, 0.5)
         XCTAssertTrue(result.sectionProgress.allSatisfy { (0...1).contains($0) })
+    }
+
+    func testAnalyzerMapsA440ToTheAPitchClassForSevenColorFlow() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sikamtv-chroma-\(UUID().uuidString)")
+            .appendingPathExtension("caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try makeAudio(at: url, duration: 2, frequency: 440)
+
+        let result = try AudioAnalyzer().analyze(url: url)
+        let frame = result.frame(at: 1.2)
+        XCTAssertEqual(frame.chroma.count, 12)
+        XCTAssertEqual(frame.chroma.indices.max(by: { frame.chroma[$0] < frame.chroma[$1] }), 9, "A4 should activate pitch class A")
+        XCTAssertGreaterThan(frame.tonalConfidence, 0.15)
+        XCTAssertTrue((0..<12).contains(frame.tonalRoot))
+        XCTAssertTrue(frame.tonalMode == 0 || frame.tonalMode == 1)
     }
 
     func testWholeSongStructureFindsQuietBuildAndClimax() throws {

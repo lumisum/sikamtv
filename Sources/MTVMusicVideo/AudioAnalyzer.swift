@@ -29,6 +29,7 @@ final class AudioAnalyzer {
         var hann = [Float](repeating: 0, count: fftSize)
         vDSP_hann_window(&hann, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
         let bandRanges = makeBandRanges(sampleRate: format.sampleRate)
+        let chromaBins = makeChromaBins(sampleRate: format.sampleRate)
 
         var fftInput = [Float](repeating: 0, count: fftSize)
         var real = [Float](repeating: 0, count: fftSize / 2)
@@ -36,6 +37,8 @@ final class AudioAnalyzer {
         var magnitudes = [Float](repeating: 0, count: fftSize / 2)
         var normalized = [Float](repeating: 0, count: bandCount)
         var previousSpectrum = [Float](repeating: 0, count: bandCount)
+        var previousChroma = [Float](repeating: 0, count: 12)
+        var previousTonalConfidence: Float = 0
         var pending: [Float] = []
         pending.reserveCapacity(65_536)
         var pendingHead = 0
@@ -48,12 +51,15 @@ final class AudioAnalyzer {
         var beatValues: [Float] = []
         var spectra: [[Float]] = []
         var waveforms: [[Float]] = []
+        var chromaFrames: [[Float]] = []
+        var tonalConfidence: [Float] = []
         let expectedFrames = Int(ceil(Double(frameTotal) / Double(hopSize)))
         for storage in [expectedFrames] { // Keep capacity setup compact and explicit.
             amplitudes.reserveCapacity(storage); loudness.reserveCapacity(storage)
             bassValues.reserveCapacity(storage); midValues.reserveCapacity(storage)
             highValues.reserveCapacity(storage); beatValues.reserveCapacity(storage)
             spectra.reserveCapacity(storage); waveforms.reserveCapacity(storage)
+            chromaFrames.reserveCapacity(storage); tonalConfidence.reserveCapacity(storage)
         }
 
         var previousAmplitude: Float = 0
@@ -112,6 +118,28 @@ final class AudioAnalyzer {
                 normalized[index] = previousSpectrum[index] + (shaped - previousSpectrum[index]) * coefficient
             }
 
+            var chroma = [Float](repeating: 0, count: 12)
+            for bin in chromaBins {
+                chroma[bin.pitchClass] += sqrt(max(0, magnitudes[bin.index])) * bin.weight
+            }
+            let chromaPeak = chroma.max() ?? 0
+            if chromaPeak > 0.000_001 {
+                for index in chroma.indices { chroma[index] /= chromaPeak }
+            }
+            let chromaMean = chroma.reduce(0, +) / 12
+            var chromaVariance: Float = 0
+            for value in chroma {
+                let delta = value - chromaMean
+                chromaVariance += delta * delta
+            }
+            let concentration = min(1, sqrt(chromaVariance / 12) * 3.2)
+            let rawConfidence = concentration * min(1, rawLevel * 1.65)
+            previousTonalConfidence += (rawConfidence - previousTonalConfidence) * (rawConfidence > previousTonalConfidence ? 0.16 : 0.07)
+            for index in chroma.indices {
+                let coefficient: Float = chroma[index] > previousChroma[index] ? 0.18 : 0.075
+                previousChroma[index] += (chroma[index] - previousChroma[index]) * coefficient
+            }
+
             let bass = average(normalized, frequencies: bandRanges, sampleRate: format.sampleRate, from: 35, to: 220)
             let mid = average(normalized, frequencies: bandRanges, sampleRate: format.sampleRate, from: 220, to: 2_400)
             let high = average(normalized, frequencies: bandRanges, sampleRate: format.sampleRate, from: 2_400, to: 16_000)
@@ -143,6 +171,8 @@ final class AudioAnalyzer {
             beatValues.append(beatEnvelope)
             spectra.append(normalized)
             waveforms.append(waveform)
+            chromaFrames.append(previousChroma)
+            tonalConfidence.append(previousTonalConfidence)
             previousSpectrum = normalized
             previousFluxSpectrum = normalized
         }
@@ -185,6 +215,7 @@ final class AudioAnalyzer {
             high: highValues,
             beats: beatValues
         )
+        let tonality = detectTonality(chroma: chromaFrames, confidence: tonalConfidence)
         progress?(1)
 
         return AudioAnalysis(
@@ -205,7 +236,11 @@ final class AudioAnalyzer {
             climaxes: structure.climaxes,
             quietness: structure.quietness,
             warmth: structure.warmth,
-            sectionProgress: structure.sectionProgress
+            sectionProgress: structure.sectionProgress,
+            chroma: chromaFrames,
+            tonalConfidence: tonalConfidence,
+            tonalRoot: tonality.root,
+            tonalMode: tonality.mode
         )
     }
 
@@ -354,6 +389,61 @@ final class AudioAnalyzer {
         }
     }
 
+    private struct ChromaBin {
+        let index: Int
+        let pitchClass: Int
+        let weight: Float
+    }
+
+    private func makeChromaBins(sampleRate: Double) -> [ChromaBin] {
+        let upperFrequency = min(5_000, sampleRate * 0.5)
+        var bins: [ChromaBin] = []
+        for index in 1..<(fftSize / 2) {
+            let frequency = Double(index) / Double(fftSize) * sampleRate
+            guard frequency >= 55, frequency <= upperFrequency else { continue }
+            let midi = 69 + 12 * log2(frequency / 440)
+            let nearest = Int(midi.rounded())
+            let pitchClass = ((nearest % 12) + 12) % 12
+            let centsDistance = abs(midi - Double(nearest))
+            let tuningWeight = Float(exp(-centsDistance * centsDistance * 5.5))
+            let octaveWeight = Float(1 / sqrt(max(1, frequency / 110)))
+            bins.append(ChromaBin(index: index, pitchClass: pitchClass, weight: tuningWeight * octaveWeight))
+        }
+        return bins
+    }
+
+    private func detectTonality(chroma: [[Float]], confidence: [Float]) -> (root: Int, mode: Int) {
+        guard !chroma.isEmpty else { return (0, 1) }
+        var aggregate = [Float](repeating: 0, count: 12)
+        var totalWeight: Float = 0
+        for index in chroma.indices {
+            let weight = max(0.05, value(confidence, index))
+            let frame = chroma[index]
+            for pitch in 0..<min(12, frame.count) { aggregate[pitch] += frame[pitch] * weight }
+            totalWeight += weight
+        }
+        guard totalWeight > 0 else { return (0, 1) }
+        for index in aggregate.indices { aggregate[index] /= totalWeight }
+        let major: [Float] = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+        let minor: [Float] = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+        var bestRoot = 0
+        var bestMode = 1
+        var bestScore: Float = -.infinity
+        for root in 0..<12 {
+            for mode in 0...1 {
+                let profile = mode == 1 ? major : minor
+                var score: Float = 0
+                for pitch in 0..<12 { score += aggregate[(root + pitch) % 12] * profile[pitch] }
+                if score > bestScore {
+                    bestScore = score
+                    bestRoot = root
+                    bestMode = mode
+                }
+            }
+        }
+        return (bestRoot, bestMode)
+    }
+
     private func average(_ values: [Float], frequencies ranges: [Range<Int>], sampleRate: Double, from: Double, to: Double) -> Float {
         var total: Float = 0
         var count: Float = 0
@@ -391,6 +481,11 @@ final class AudioAnalysisCache: @unchecked Sendable {
         let sectionProgress: Data
         let spectrum: Data
         let waveform: Data
+        let chromaWidth: Int
+        let chroma: Data
+        let tonalConfidence: Data
+        let tonalRoot: Int
+        let tonalMode: Int
     }
     private let encoder = PropertyListEncoder()
     private let decoder = PropertyListDecoder()
@@ -423,7 +518,11 @@ final class AudioAnalysisCache: @unchecked Sendable {
             climaxes: floats(payload.climaxes),
             quietness: floats(payload.quietness),
             warmth: floats(payload.warmth),
-            sectionProgress: floats(payload.sectionProgress)
+            sectionProgress: floats(payload.sectionProgress),
+            chroma: rows(payload.chroma, width: payload.chromaWidth),
+            tonalConfidence: floats(payload.tonalConfidence),
+            tonalRoot: payload.tonalRoot,
+            tonalMode: payload.tonalMode
         )
     }
 
@@ -432,6 +531,7 @@ final class AudioAnalysisCache: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let spectrumWidth = analysis.spectrum.first?.count ?? 0
         let waveformWidth = analysis.waveform.first?.count ?? 0
+        let chromaWidth = analysis.chroma.first?.count ?? 0
         let payload = Payload(
             version: analysis.version,
             duration: analysis.duration,
@@ -454,7 +554,12 @@ final class AudioAnalysisCache: @unchecked Sendable {
             warmth: bytes(analysis.warmth),
             sectionProgress: bytes(analysis.sectionProgress),
             spectrum: bytes(flatten(analysis.spectrum, width: spectrumWidth)),
-            waveform: bytes(flatten(analysis.waveform, width: waveformWidth))
+            waveform: bytes(flatten(analysis.waveform, width: waveformWidth)),
+            chromaWidth: chromaWidth,
+            chroma: bytes(flatten(analysis.chroma, width: chromaWidth)),
+            tonalConfidence: bytes(analysis.tonalConfidence),
+            tonalRoot: analysis.tonalRoot,
+            tonalMode: analysis.tonalMode
         )
         guard let data = try? encoder.encode(payload) else { return }
         try? data.write(to: cacheURL, options: .atomic)

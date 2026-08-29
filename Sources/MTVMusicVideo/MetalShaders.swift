@@ -122,9 +122,16 @@ enum MetalShaders {
         float2 metric = float2(delta.x * aspect, delta.y);
         float radius = length(metric);
         float centralProtection = exp(-dot(float2((uv.x - 0.5) * aspect, uv.y - 0.52), float2((uv.x - 0.5) * aspect, uv.y - 0.52)) * 7.5);
-        float visionProtection = subjectMaskTexture.sample(samp, clamp(uv, float2(0.002), float2(0.998))).r;
-        float protectedArea = mix(centralProtection, max(visionProtection, centralProtection * 0.18), hasVisionMask);
-        float motionMask = 1.0 - protection * protectedArea * 0.90;
+        float2 maskTexel = 1.0 / float2(subjectMaskTexture.get_width(), subjectMaskTexture.get_height());
+        float visionCenter = subjectMaskTexture.sample(samp, clamp(uv, float2(0.002), float2(0.998))).r;
+        float visionSoft = visionCenter * 0.36;
+        visionSoft += subjectMaskTexture.sample(samp, clamp(uv + float2(maskTexel.x * 4.0, 0.0), float2(0.002), float2(0.998))).r * 0.16;
+        visionSoft += subjectMaskTexture.sample(samp, clamp(uv - float2(maskTexel.x * 4.0, 0.0), float2(0.002), float2(0.998))).r * 0.16;
+        visionSoft += subjectMaskTexture.sample(samp, clamp(uv + float2(0.0, maskTexel.y * 4.0), float2(0.002), float2(0.998))).r * 0.16;
+        visionSoft += subjectMaskTexture.sample(samp, clamp(uv - float2(0.0, maskTexel.y * 4.0), float2(0.002), float2(0.998))).r * 0.16;
+        float visionProtection = max(visionCenter * 0.72, visionSoft);
+        float protectedArea = mix(centralProtection, max(visionProtection, centralProtection * 0.14), hasVisionMask);
+        float motionMask = 1.0 - protection * smoothstep(0.02, 0.94, protectedArea) * 0.86;
 
         // A luminance-derived pseudo-depth layer creates restrained 2.5D
         // parallax from a single image without requiring an ML model.
@@ -156,21 +163,28 @@ enum MetalShaders {
         color += (1.0 - color) * transient * life * awareness * 0.010 * motionMask;
         if (subjectMode > 0.5) {
             float subject = subjectMaskTexture.sample(samp, uv).r;
+            float softSubject = subject * 0.44;
+            softSubject += subjectMaskTexture.sample(samp, clamp(uv + float2(maskTexel.x * 3.0, 0.0), float2(0.002), float2(0.998))).r * 0.14;
+            softSubject += subjectMaskTexture.sample(samp, clamp(uv - float2(maskTexel.x * 3.0, 0.0), float2(0.002), float2(0.998))).r * 0.14;
+            softSubject += subjectMaskTexture.sample(samp, clamp(uv + float2(0.0, maskTexel.y * 3.0), float2(0.002), float2(0.998))).r * 0.14;
+            softSubject += subjectMaskTexture.sample(samp, clamp(uv - float2(0.0, maskTexel.y * 3.0), float2(0.002), float2(0.998))).r * 0.14;
             if (subjectMode < 1.5) {
-                float alpha = smoothstep(0.16, 0.76, subject) * in.color.a;
+                float alpha = smoothstep(0.025, 0.94, softSubject) * in.color.a;
                 return float4(clamp(color, 0.0, 1.0) * alpha, alpha);
             }
-            float2 texel = 1.0 / float2(subjectMaskTexture.get_width(), subjectMaskTexture.get_height());
-            float gx = subjectMaskTexture.sample(samp, clamp(uv + float2(texel.x, 0.0), float2(0.002), float2(0.998))).r
-                     - subjectMaskTexture.sample(samp, clamp(uv - float2(texel.x, 0.0), float2(0.002), float2(0.998))).r;
-            float gy = subjectMaskTexture.sample(samp, clamp(uv + float2(0.0, texel.y), float2(0.002), float2(0.998))).r
-                     - subjectMaskTexture.sample(samp, clamp(uv - float2(0.0, texel.y), float2(0.002), float2(0.998))).r;
-            float edge = smoothstep(0.025, 0.32, length(float2(gx, gy))) * (1.0 - smoothstep(0.82, 1.0, subject));
-            float pulse = 0.055 + energy * 0.060 + buildup * 0.045 + climax * 0.085 + transient * 0.10;
-            float alpha = edge * edgeLightStrength * pulse * in.color.a;
-            float3 sampledTint = tex.sample(samp, clamp(uv + normalize(float2(gx, gy) + 0.0001) * texel * 2.0, float2(0.002), float2(0.998))).rgb;
-            float3 edgeTint = mix(sampledTint, float3(1.0), 0.38 + high * 0.18);
-            return float4(edgeTint * alpha, alpha);
+            float wideSubject = softSubject * 0.28;
+            wideSubject += subjectMaskTexture.sample(samp, clamp(uv + float2(maskTexel.x * 9.0, 0.0), float2(0.002), float2(0.998))).r * 0.18;
+            wideSubject += subjectMaskTexture.sample(samp, clamp(uv - float2(maskTexel.x * 9.0, 0.0), float2(0.002), float2(0.998))).r * 0.18;
+            wideSubject += subjectMaskTexture.sample(samp, clamp(uv + float2(0.0, maskTexel.y * 9.0), float2(0.002), float2(0.998))).r * 0.18;
+            wideSubject += subjectMaskTexture.sample(samp, clamp(uv - float2(0.0, maskTexel.y * 9.0), float2(0.002), float2(0.998))).r * 0.18;
+            float atmosphere = smoothstep(0.015, 0.46, wideSubject)
+                * (1.0 - smoothstep(0.50, 0.96, softSubject));
+            float pulse = 0.026 + energy * 0.018 + buildup * 0.012 + climax * 0.022;
+            float alpha = pow(atmosphere, 0.82) * edgeLightStrength * pulse * in.color.a;
+            float3 nearby = tex.sample(samp, clamp(uv + float2(maskTexel.x * 5.0, -maskTexel.y * 3.0), float2(0.002), float2(0.998))).rgb;
+            float3 atmosphereTint = mix(color, nearby, 0.42);
+            atmosphereTint = mix(atmosphereTint, float3(1.0), 0.10 + high * 0.05);
+            return float4(atmosphereTint * alpha, alpha);
         }
         return float4(clamp(color, 0.0, 1.0) * in.color.a, in.color.a);
     }
