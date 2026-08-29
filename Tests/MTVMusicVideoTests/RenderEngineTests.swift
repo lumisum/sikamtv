@@ -468,7 +468,7 @@ final class RenderEngineTests: XCTestCase {
         }
     }
 
-    func testRealtimePreviewStaysWithinThirtyFPSFrameBudgetWith4KBackground() throws {
+    func testRealtimePreviewStaysWithinThirtyFPSFrameBudgetWith4KBackgroundAndAtmosphere() throws {
         let backgroundContext = CGContext(data: nil, width: 3840, height: 2160, bitsPerComponent: 8, bytesPerRow: 3840 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         backgroundContext.setFillColor(CGColor(red: 0.14, green: 0.32, blue: 0.62, alpha: 1))
         backgroundContext.fill(CGRect(x: 0, y: 0, width: 3840, height: 2160))
@@ -476,6 +476,9 @@ final class RenderEngineTests: XCTestCase {
         let engine = RenderEngine()
         var settings = RenderSettings()
         settings.blur = 22
+        settings.atmospherePreset = .rainyNight
+        settings.atmosphereIntensity = 0.78
+        settings.atmosphereForegroundDensity = 0.72
         let size = AspectRatio.portrait.realtimePreviewSize
         let lyrics = [LRCLine(time: 0, text: "性能优先，实时清晰")]
 
@@ -584,6 +587,99 @@ final class RenderEngineTests: XCTestCase {
         let lowImage = try XCTUnwrap(engine.render(size: size, time: 1, settings: lower, background: nil, backgroundDuration: 0, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
         let highImage = try XCTUnwrap(engine.render(size: size, time: 1, settings: upper, background: nil, backgroundDuration: 0, lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
         XCTAssertGreaterThan(sparseAverageColorDifference(lowImage, highImage), 0.008)
+    }
+
+    func testEnergyRingPullsHighEnergyFartherTowardTheCenter() {
+        func frame(spectrumValue: Float) -> AudioFrameFeatures {
+            AudioFrameFeatures(
+                amplitude: 0.65,
+                loudness: 0.68,
+                bass: 0.62,
+                mid: 0.58,
+                high: 0.44,
+                beat: 0.52,
+                spectrum: Array(repeating: spectrumValue, count: 96),
+                waveform: Array(repeating: 0, count: 128),
+                energy: 0.66
+            )
+        }
+
+        func closestVertexRadius(_ mesh: VisualizerMesh, center: SIMD2<Float>) -> Float {
+            mesh.additive.map { simd_length($0.position - center) }.min() ?? .greatestFiniteMagnitude
+        }
+
+        var settings = RenderSettings()
+        settings.visualizer = .circle
+        settings.visualizerIntegration = 0
+        settings.visualizerScale = 1
+        settings.visualizerStrength = 1
+        let size = CGSize(width: 960, height: 540)
+        let center = SIMD2<Float>(Float(size.width * 0.5), Float(size.height * settings.visualizerPositionY))
+        let engine = VisualizerEngine()
+        let quiet = engine.mesh(kind: .circle, size: size, features: frame(spectrumValue: 0.08), settings: settings, time: 1, palette: settings.template.palette, staticBackground: true)
+        let energetic = engine.mesh(kind: .circle, size: size, features: frame(spectrumValue: 0.92), settings: settings, time: 1, palette: settings.template.palette, staticBackground: true)
+
+        XCTAssertLessThan(
+            closestVertexRadius(energetic, center: center),
+            closestVertexRadius(quiet, center: center) - 14,
+            "A strong spectrum should create a visibly deeper inward amplitude"
+        )
+    }
+
+    func testWaterAtmosphereConcentratesItsRefractionBelowTheWaterline() throws {
+        func regionDifference(_ first: CGImage, _ second: CGImage, yRange: Range<Int>) -> CGFloat {
+            let a = NSBitmapImageRep(cgImage: first)
+            let b = NSBitmapImageRep(cgImage: second)
+            var total: CGFloat = 0
+            var count: CGFloat = 0
+            for y in stride(from: yRange.lowerBound, to: min(yRange.upperBound, a.pixelsHigh), by: 3) {
+                for x in stride(from: 0, to: a.pixelsWide, by: 4) {
+                    guard let left = a.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                          let right = b.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                    total += abs(left.redComponent - right.redComponent)
+                        + abs(left.greenComponent - right.greenComponent)
+                        + abs(left.blueComponent - right.blueComponent)
+                    count += 1
+                }
+            }
+            return total / max(1, count)
+        }
+
+        let background = try XCTUnwrap(makeBandedBackground(width: 640, height: 360))
+        let frames = 60
+        let analysis = AudioAnalysis(
+            duration: 2,
+            sampleRate: 44_100,
+            amplitudes: Array(repeating: 0.68, count: frames),
+            loudness: Array(repeating: 0.72, count: frames),
+            bass: Array(repeating: 0.82, count: frames),
+            mid: Array(repeating: 0.66, count: frames),
+            high: Array(repeating: 0.48, count: frames),
+            beats: Array(repeating: 0.72, count: frames),
+            spectrum: Array(repeating: Array(repeating: 0.58, count: 96), count: frames)
+        )
+        var settings = RenderSettings()
+        settings.aspectRatio = .landscape
+        settings.visualizerStrength = 0
+        settings.visualizerGlow = 0
+        settings.visualizerBrilliance = 0
+        settings.visualizerIntegration = 0
+        settings.backgroundMotionStyle = .off
+        settings.blur = 0
+        settings.darkness = 0
+        settings.introEnabled = false
+        settings.smartCompositionEnabled = false
+        settings.atmospherePreset = .off
+        let size = CGSize(width: 320, height: 180)
+        let baseline = try XCTUnwrap(RenderEngine().render(size: size, time: 1, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "water-locality", lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+
+        settings.atmospherePreset = .lakesideHealing
+        settings.atmosphereIntensity = 0.82
+        settings.atmosphereWaterline = 0.66
+        let water = try XCTUnwrap(RenderEngine().render(size: size, time: 1, settings: settings, background: background, backgroundDuration: 0, backgroundIdentifier: "water-locality", lyrics: [], analysis: analysis, fontName: "PingFangSC-Regular"))
+        let upper = regionDifference(baseline, water, yRange: 0..<55)
+        let lower = regionDifference(baseline, water, yRange: 120..<180)
+        XCTAssertGreaterThan(lower, upper + 0.004, "Water movement should stay concentrated below the selected waterline")
     }
 
     func testLyricAnimationsCrossfadeOutgoingAndIncomingLinesContinuously() {

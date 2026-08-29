@@ -334,7 +334,9 @@ struct VisualizerEngine {
         guard !values.isEmpty else { return }
         let activePitches = activePitchClasses(features)
         appendRadial(&mesh.radials, center: center, radiusX: radius * 2.05, radiusY: radius * 2.05, color: gpuColor(harmonicColor(slot: 4, progress: 0.80, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.022 + CGFloat(features.loudness) * 0.035))
-        appendRadial(&mesh.radials, center: center, radiusX: radius * 0.92, radiusY: radius * 0.92, color: gpuColor(harmonicColor(slot: 1, progress: 0.30, activePitches: activePitches, features: features, settings: settings, palette: palette), alpha: 0.035 + CGFloat(features.beat) * 0.055))
+        let centerColor = harmonicColor(slot: 1, progress: 0.30, activePitches: activePitches, features: features, settings: settings, palette: palette)
+        let centerPulse = CGFloat(features.bass) * 0.10 + CGFloat(features.mid) * 0.06
+        appendRadial(&mesh.radials, center: center, radiusX: radius * (0.96 + centerPulse), radiusY: radius * (0.96 + centerPulse), color: gpuColor(centerColor, alpha: 0.045 + CGFloat(features.beat) * 0.065 + CGFloat(features.bass) * 0.025))
         let points = max(160, Int(160 + settings.visualizerDensity * 80))
         for orbit in 0..<3 {
             var ring: [SIMD2<Float>] = []
@@ -344,15 +346,44 @@ struct VisualizerEngine {
                 let angle = p * .pi * 2 - .pi / 2 + CGFloat(time) * (orbit == 0 ? 0.008 : -0.004)
                 let mirrored = p <= 0.5 ? p * 2 : (1 - p) * 2
                 let source = min(values.count - 1, Int(mirrored * CGFloat(values.count - 1)))
-                let value = CGFloat(values[source]) * (orbit == 0 ? 1 : 0.58)
-                let displacement = pow(value, 1.28) * minimum * (orbit == 0 ? 0.040 : 0.018) * settings.visualizerStrength
+                let valueScale: CGFloat = orbit == 0 ? 1 : (orbit == 1 ? 0.96 : 0.56)
+                let value = CGFloat(values[source]) * valueScale
+                let amplitude: CGFloat = orbit == 0 ? 0.040 : (orbit == 1 ? 0.064 : 0.018)
+                let direction: CGFloat = orbit == 1 ? -1 : 1
+                let baseScale: CGFloat = orbit == 0 ? 1.015 : (orbit == 1 ? 0.97 : 1.12)
+                let displacement = pow(value, orbit == 1 ? 1.12 : 1.28) * minimum * amplitude * settings.visualizerStrength
+                let centerPull = orbit == 1
+                    ? minimum * (CGFloat(features.bass) * 0.010 + CGFloat(features.mid) * 0.006 + CGFloat(features.beat) * 0.004) * settings.visualizerStrength
+                    : 0
                 let slowDrift = sin(angle * CGFloat(2 + orbit) + CGFloat(time) * (0.20 + CGFloat(orbit) * 0.04)) * CGFloat(features.mid) * minimum * 0.0035
-                let r = radius * (1 + CGFloat(orbit - 1) * 0.105) + displacement + slowDrift
+                let unclampedRadius = radius * baseScale + displacement * direction - centerPull + slowDrift
+                let r = max(radius * 0.38, unclampedRadius)
                 ring.append(SIMD2(Float(center.x + cos(angle) * r), Float(center.y + sin(angle) * r)))
             }
             let color = harmonicColor(slot: orbit, progress: CGFloat(orbit) / 2, activePitches: activePitches, features: features, settings: settings, palette: palette)
-            appendPolyline(&mesh.additive, points: ring, width: Float((8 + glow * 7) * renderScale), color: gpuColor(color, alpha: orbit == 0 ? 0.060 : 0.030), closed: true)
-            appendPolyline(&mesh.additive, points: ring, width: Float((orbit == 0 ? 1.8 : 1.05) * renderScale), color: gpuColor(color, alpha: orbit == 0 ? 0.62 : 0.24), closed: true)
+            let isInner = orbit == 1
+            appendPolyline(&mesh.additive, points: ring, width: Float((8 + glow * (isInner ? 10 : 7)) * renderScale), color: gpuColor(color, alpha: orbit == 0 ? 0.060 : (isInner ? 0.052 : 0.030)), closed: true)
+            appendPolyline(&mesh.additive, points: ring, width: Float((orbit == 0 ? 1.8 : (isInner ? 1.45 : 1.05)) * renderScale), color: gpuColor(color, alpha: orbit == 0 ? 0.62 : (isInner ? 0.48 : 0.24)), closed: true)
+        }
+
+        // Fine inward fibers make the center-facing response readable without
+        // turning the ring into a hard radial bar graph. Bass and mids pull
+        // farther toward the center; highs remain as a lighter outer shimmer.
+        let fiberCount = max(36, Int(36 + settings.visualizerDensity * 24))
+        for index in 0..<fiberCount {
+            let p = CGFloat(index) / CGFloat(fiberCount)
+            let angle = p * .pi * 2 - .pi / 2 - CGFloat(time) * 0.004
+            let mirrored = p <= 0.5 ? p * 2 : (1 - p) * 2
+            let source = min(values.count - 1, Int(mirrored * CGFloat(values.count - 1)))
+            let value = CGFloat(values[source])
+            let length = minimum * (0.010 + pow(value, 1.10) * 0.068 * settings.visualizerStrength + CGFloat(features.bass) * 0.010)
+            let outerRadius = radius * 0.965
+            let innerRadius = max(radius * 0.40, outerRadius - length)
+            let start = SIMD2(Float(center.x + cos(angle) * outerRadius), Float(center.y + sin(angle) * outerRadius))
+            let end = SIMD2(Float(center.x + cos(angle) * innerRadius), Float(center.y + sin(angle) * innerRadius))
+            let color = harmonicColor(slot: index, progress: p, activePitches: activePitches, features: features, settings: settings, palette: palette)
+            appendPolyline(&mesh.additive, points: [start, end], width: Float((4.5 + glow * 5.5) * renderScale), color: gpuColor(color, alpha: 0.016 + value * 0.026), closed: false)
+            appendPolyline(&mesh.additive, points: [start, end], width: Float(max(0.55, (0.65 + value * 0.70) * renderScale)), color: gpuColor(color, alpha: 0.10 + value * 0.30), closed: false)
         }
         appendOrbitHighlights(&mesh, center: center, radius: radius, features: features, settings: settings, palette: palette, time: time, renderScale: renderScale)
     }

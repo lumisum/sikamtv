@@ -49,6 +49,7 @@ final class RenderEngine {
 
     private let metal: MetalRenderer
     private let visualizerEngine = VisualizerEngine()
+    private let atmosphereEngine = AtmosphereEngine()
     private var backgroundCache: [BackgroundCacheKey: MTLTexture] = [:]
     private var subjectMaskTextures: [String: MTLTexture] = [:]
     private var lyricLuminanceCache: [LyricLuminanceCacheKey: LyricLuminanceSample] = [:]
@@ -255,7 +256,7 @@ final class RenderEngine {
 
         let features = analysis?.frame(at: time) ?? .silent
         let directedFeatures = features.directed(amount: Float(effectiveSettings.musicAwareness))
-        let mesh = visualizerEngine.mesh(
+        let visualizerMesh = visualizerEngine.mesh(
             kind: effectiveSettings.visualizer,
             size: size,
             features: features,
@@ -264,6 +265,19 @@ final class RenderEngine {
             palette: palette,
             staticBackground: background != nil && backgroundDuration <= 0
         )
+        let atmosphere = atmosphereEngine.frame(
+            size: size,
+            features: directedFeatures,
+            settings: effectiveSettings,
+            time: time,
+            palette: palette,
+            scene: sceneProfile
+        )
+        var mesh = atmosphere.mesh
+        mesh.soft.append(contentsOf: visualizerMesh.soft)
+        mesh.volumes.append(contentsOf: visualizerMesh.volumes)
+        mesh.radials.append(contentsOf: visualizerMesh.radials)
+        mesh.additive.append(contentsOf: visualizerMesh.additive)
         let overlayAlpha = Float(min(1, max(0, effectiveSettings.backgroundOverlayOpacity)))
         let overlay = SIMD4<Float>(
             Float(min(1, max(0, effectiveSettings.backgroundOverlayRed))) * overlayAlpha,
@@ -314,7 +328,11 @@ final class RenderEngine {
             quiet: directedFeatures.quiet,
             warmth: directedFeatures.warmth,
             sectionProgress: directedFeatures.sectionProgress,
-            musicAwareness: Float(effectiveSettings.musicAwareness)
+            musicAwareness: Float(effectiveSettings.musicAwareness),
+            atmosphereWaterStrength: atmosphere.waterStrength,
+            atmosphereWaterline: Float(min(0.88, max(0.48, effectiveSettings.atmosphereWaterline))),
+            atmosphereAirStrength: atmosphere.airStrength,
+            atmosphereAirMode: atmosphere.airMode
         )
         let backgroundMotion = BackgroundMotionSettings(
             time: time,

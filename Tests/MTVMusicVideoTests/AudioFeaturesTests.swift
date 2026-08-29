@@ -37,6 +37,11 @@ final class AudioFeaturesTests: XCTestCase {
         settings.musicAwareness = 0.73
         settings.sevenColorFlowEnabled = false
         settings.sevenColorFlowIntensity = 0.43
+        settings.atmospherePreset = .rainyNight
+        settings.atmosphereIntensity = 0.72
+        settings.atmosphereMusicResponse = 0.81
+        settings.atmosphereForegroundDensity = 0.63
+        settings.atmosphereWaterline = 0.76
         settings.backgroundMotionStyle = .liquid
         settings.backgroundLife = 0.77
         settings.smartBlurEnabled = false
@@ -68,6 +73,11 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.musicAwareness, RenderSettings().musicAwareness)
         XCTAssertTrue(settings.sevenColorFlowEnabled)
         XCTAssertEqual(settings.sevenColorFlowIntensity, RenderSettings().sevenColorFlowIntensity)
+        XCTAssertEqual(settings.atmospherePreset, .off)
+        XCTAssertEqual(settings.atmosphereIntensity, RenderSettings().atmosphereIntensity)
+        XCTAssertEqual(settings.atmosphereMusicResponse, RenderSettings().atmosphereMusicResponse)
+        XCTAssertEqual(settings.atmosphereForegroundDensity, RenderSettings().atmosphereForegroundDensity)
+        XCTAssertEqual(settings.atmosphereWaterline, RenderSettings().atmosphereWaterline)
         XCTAssertEqual(settings.backgroundMotionStyle, RenderSettings().backgroundMotionStyle)
         XCTAssertEqual(settings.backgroundLife, RenderSettings().backgroundLife)
         XCTAssertEqual(settings.backgroundOverlayOpacity, 0)

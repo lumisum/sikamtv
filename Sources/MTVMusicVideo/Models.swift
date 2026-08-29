@@ -182,7 +182,7 @@ enum VisualizerKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .wave: return "多层波形随人声与旋律柔和流动"
         case .spectrum: return "频段能量驱动经典彩色频谱柱"
         case .mirror: return "上下对称的频谱包络与地平线光带"
-        case .circle: return "频谱环绕中心形成呼吸式能量光环"
+        case .circle: return "频谱沿光环内外双向呼吸，中低频向圆心形成更深振幅"
         case .ripple: return "低频推动椭圆水波向外连续扩散"
         case .aurora: return "不同频段分别驱动多层半透明极光"
         case .prism: return "节拍穿行于旋转的彩色几何隧道"
@@ -353,6 +353,67 @@ enum IntroAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendable 
     var id: String { rawValue }
 }
 
+enum AtmospherePreset: String, CaseIterable, Identifiable, Codable, Sendable {
+    case off = "关闭氛围"
+    case zenLandscape = "禅意山水"
+    case lakesideHealing = "湖畔治愈"
+    case rainyNight = "雨夜抒情"
+    case winterSilence = "冬日寂静"
+    case forestBreeze = "森林轻风"
+    case springBlossom = "春日花语"
+    case autumnMemory = "秋日回忆"
+    case summerFireflies = "夏夜星萤"
+    case coastalTide = "海岸潮汐"
+    case cloudSunrise = "云海日出"
+    case chineseGarden = "国风花境"
+    case inkZen = "水墨禅境"
+    case neonCity = "城市霓虹"
+    case desertJourney = "沙海孤旅"
+    case candleQuiet = "烛火静谧"
+    case epicCinema = "电影史诗"
+
+    var id: String { rawValue }
+
+    var subtitle: String {
+        switch self {
+        case .off: return "只保留背景、歌词与音频可视化"
+        case .zenLandscape: return "薄雾 · 流云 · 山水涟漪"
+        case .lakesideHealing: return "湖面呼吸 · 柔光倒影 · 水纹"
+        case .rainyNight: return "景深雨丝 · 低空雾气 · 水花"
+        case .winterSilence: return "远近雪花 · 冷雾 · 柔和风势"
+        case .forestBreeze: return "落叶 · 林间微尘 · 轻风"
+        case .springBlossom: return "花瓣 · 花粉 · 柔云"
+        case .autumnMemory: return "枯叶 · 暖尘 · 斜阳"
+        case .summerFireflies: return "萤火 · 星点 · 夜雾"
+        case .coastalTide: return "潮汐 · 海雾 · 波光"
+        case .cloudSunrise: return "云海 · 晨光 · 空气粒子"
+        case .chineseGarden: return "花瓣 · 墨雾 · 细水纹"
+        case .inkZen: return "水墨烟气 · 留白颗粒 · 晕染"
+        case .neonCity: return "雨丝 · 散景 · 霓虹湿地"
+        case .desertJourney: return "风沙 · 热浪 · 远景尘雾"
+        case .candleQuiet: return "暖尘 · 火光 · 细小余烬"
+        case .epicCinema: return "厚云 · 风尘 · 余烬 · 光束"
+        }
+    }
+
+    var usesWater: Bool {
+        switch self {
+        case .zenLandscape, .lakesideHealing, .rainyNight, .coastalTide, .chineseGarden, .inkZen, .neonCity: return true
+        default: return false
+        }
+    }
+
+    var category: String {
+        switch self {
+        case .off: return "基础"
+        case .zenLandscape, .lakesideHealing, .chineseGarden, .inkZen: return "东方意境"
+        case .forestBreeze, .springBlossom, .autumnMemory, .summerFireflies, .winterSilence: return "四季自然"
+        case .rainyNight, .coastalTide, .cloudSunrise: return "天气水域"
+        case .neonCity, .desertJourney, .candleQuiet, .epicCinema: return "电影幻想"
+        }
+    }
+}
+
 struct RenderSettings: Codable, Equatable, Sendable {
     var aspectRatio: AspectRatio = .portrait
     var template: VisualTemplate = .ethereal
@@ -393,6 +454,12 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var sevenColorFlowEnabled: Bool = true
     var sevenColorFlowIntensity: Double = 0.74
 
+    var atmospherePreset: AtmospherePreset = .off
+    var atmosphereIntensity: Double = 0.58
+    var atmosphereMusicResponse: Double = 0.68
+    var atmosphereForegroundDensity: Double = 0.52
+    var atmosphereWaterline: Double = 0.70
+
     var lyricSize: Double = 42
     var lyricPositionY: Double = 0.60
     var lyricWidth: Double = 0.82
@@ -424,6 +491,7 @@ struct RenderSettings: Codable, Equatable, Sendable {
         case visualizerStrength, visualizerPositionY, visualizerScale, visualizerGlow, visualizerSmoothing, visualizerDensity
         case visualizerBrilliance, visualizerIntegration, visualizerTrail, visualizerColorRichness, visualizerDepth, visualizerBeatImpact, musicAwareness
         case sevenColorFlowEnabled, sevenColorFlowIntensity
+        case atmospherePreset, atmosphereIntensity, atmosphereMusicResponse, atmosphereForegroundDensity, atmosphereWaterline
         case lyricSize, lyricPositionY, lyricWidth, lyricLineSpacing, lyricInactiveOpacity, lyricGlow, lyricAnimationDuration
         case lyricAnimation, lyricAlignment, fontPostScriptName
         case introEnabled, songTitle, authorName, introShowsDate, introDuration, introAnimationDuration, introTitleSize, introAnimationStyle
@@ -469,6 +537,11 @@ struct RenderSettings: Codable, Equatable, Sendable {
         musicAwareness = try container.decodeIfPresent(Double.self, forKey: .musicAwareness) ?? defaults.musicAwareness
         sevenColorFlowEnabled = try container.decodeIfPresent(Bool.self, forKey: .sevenColorFlowEnabled) ?? defaults.sevenColorFlowEnabled
         sevenColorFlowIntensity = try container.decodeIfPresent(Double.self, forKey: .sevenColorFlowIntensity) ?? defaults.sevenColorFlowIntensity
+        atmospherePreset = try container.decodeIfPresent(AtmospherePreset.self, forKey: .atmospherePreset) ?? defaults.atmospherePreset
+        atmosphereIntensity = try container.decodeIfPresent(Double.self, forKey: .atmosphereIntensity) ?? defaults.atmosphereIntensity
+        atmosphereMusicResponse = try container.decodeIfPresent(Double.self, forKey: .atmosphereMusicResponse) ?? defaults.atmosphereMusicResponse
+        atmosphereForegroundDensity = try container.decodeIfPresent(Double.self, forKey: .atmosphereForegroundDensity) ?? defaults.atmosphereForegroundDensity
+        atmosphereWaterline = try container.decodeIfPresent(Double.self, forKey: .atmosphereWaterline) ?? defaults.atmosphereWaterline
         lyricSize = try container.decodeIfPresent(Double.self, forKey: .lyricSize) ?? defaults.lyricSize
         lyricPositionY = try container.decodeIfPresent(Double.self, forKey: .lyricPositionY) ?? defaults.lyricPositionY
         lyricWidth = try container.decodeIfPresent(Double.self, forKey: .lyricWidth) ?? defaults.lyricWidth
@@ -528,6 +601,11 @@ struct RenderSettings: Codable, Equatable, Sendable {
         try container.encode(musicAwareness, forKey: .musicAwareness)
         try container.encode(sevenColorFlowEnabled, forKey: .sevenColorFlowEnabled)
         try container.encode(sevenColorFlowIntensity, forKey: .sevenColorFlowIntensity)
+        try container.encode(atmospherePreset, forKey: .atmospherePreset)
+        try container.encode(atmosphereIntensity, forKey: .atmosphereIntensity)
+        try container.encode(atmosphereMusicResponse, forKey: .atmosphereMusicResponse)
+        try container.encode(atmosphereForegroundDensity, forKey: .atmosphereForegroundDensity)
+        try container.encode(atmosphereWaterline, forKey: .atmosphereWaterline)
         try container.encode(lyricSize, forKey: .lyricSize)
         try container.encode(lyricPositionY, forKey: .lyricPositionY)
         try container.encode(lyricWidth, forKey: .lyricWidth)

@@ -29,6 +29,7 @@ enum MetalShaders {
         float4 mode;     // color richness, depth, beat impact, history valid
         float4 structure; // energy, buildup, climax, quietness
         float4 character; // transient, warmth, section progress, awareness
+        float4 atmosphere; // water strength, waterline, air material strength, air material mode
     };
 
     struct BackgroundUniforms {
@@ -267,6 +268,51 @@ enum MetalShaders {
             sin((uv.y + time * 0.025) * 18.0 + mid * 3.0),
             cos((uv.x - time * 0.018) * 15.0 + high * 4.0)
         ) * integration * depth * (0.00025 + mid * 0.00055);
+
+        // Atmosphere materials share the same scene pass as the background.
+        // Haze breathes broadly, desert heat rises from the lower frame, and
+        // ink drifts in slower layered curls. The displacement is intentionally
+        // sub-pixel at rest and grows mainly through phrase energy.
+        float airStrength = post.atmosphere.z;
+        float airMode = post.atmosphere.w;
+        if (airStrength > 0.001) {
+            float phrase = 0.54 + energy * 0.24 + buildup * 0.16 + transient * 0.10;
+            if (airMode < 1.5) {
+                float2 haze = float2(
+                    sin(uv.y * 17.0 + time * 0.10 + sectionProgress * 2.2),
+                    cos(uv.x * 13.0 - time * 0.075 + mid * 2.1)
+                );
+                uv += haze * airStrength * phrase * float2(0.00085, 0.00042);
+            } else if (airMode < 2.5) {
+                float heatMask = smoothstep(0.34, 0.96, uv.y);
+                float heat = sin(uv.y * 54.0 - time * (0.78 + bass * 0.34) + sin(uv.x * 21.0) * 1.8);
+                uv.x += heat * heatMask * airStrength * phrase * 0.00145;
+                uv.y += cos(uv.x * 37.0 + time * 0.41) * heatMask * airStrength * 0.00034;
+            } else {
+                float inkA = sin((uv.x + uv.y * 0.62) * 21.0 + time * 0.12 + sectionProgress * 2.0);
+                float inkB = cos((uv.y - uv.x * 0.38) * 17.0 - time * 0.09 + mid * 2.4);
+                uv += float2(inkB, inkA) * airStrength * phrase * 0.00078;
+            }
+        }
+
+        // Localized water refraction only affects the region below the chosen
+        // waterline. Layered waves remain subtle while transient-driven rings
+        // briefly deepen the displacement on musically meaningful impacts.
+        float waterStrength = post.atmosphere.x;
+        float waterline = clamp(post.atmosphere.y, 0.48, 0.88);
+        float waterMask = smoothstep(waterline, min(0.99, waterline + 0.12), uv.y) * waterStrength;
+        float waterDepth = saturate((uv.y - waterline) / max(0.08, 1.0 - waterline));
+        float broadWater = sin(uv.x * (34.0 + mid * 9.0) + time * (0.42 + bass * 0.52) + sectionProgress * 2.1);
+        float fineWater = sin(uv.x * 83.0 - time * (0.31 + high * 0.35) + uv.y * 13.0) * 0.38;
+        float2 rippleCenterA = float2(0.30 + sin(sectionProgress * 6.2831853) * 0.08, waterline + 0.10);
+        float2 rippleCenterB = float2(0.70 + cos(sectionProgress * 6.2831853) * 0.07, waterline + 0.18);
+        float rippleDistanceA = length((uv - rippleCenterA) * float2(aspect, 3.8));
+        float rippleDistanceB = length((uv - rippleCenterB) * float2(aspect, 4.2));
+        float ripple = sin(rippleDistanceA * 92.0 - time * 3.2) * exp(-rippleDistanceA * 7.0)
+            + sin(rippleDistanceB * 104.0 - time * 2.7) * exp(-rippleDistanceB * 7.8);
+        float impactRipple = ripple * max(beat, transient * 0.86) * (0.00065 + bass * 0.00065);
+        uv.x += waterMask * (broadWater + fineWater) * (0.00055 + bass * 0.00105) * (0.45 + waterDepth * 0.55);
+        uv.y += waterMask * (broadWater * 0.32 + fineWater * 0.48) * (0.00030 + mid * 0.00048) + waterMask * impactRipple;
         uv = clamp(uv, float2(0.001), float2(0.999));
 
         float chroma = brilliance * richness * (0.00028 + high * 0.0010 + transient * beatImpact * 0.00075 + climax * 0.00055);
@@ -275,6 +321,19 @@ enum MetalShaders {
         color.r = scene.sample(samp, clamp(uv + chromaDirection, float2(0.001), float2(0.999))).r;
         color.g = scene.sample(samp, uv).g;
         color.b = scene.sample(samp, clamp(uv - chromaDirection, float2(0.001), float2(0.999))).b;
+
+        // A faint vertically compressed reflection and broken highlights make
+        // the lower region read as water without turning it into a hard mirror.
+        if (waterMask > 0.001) {
+            float2 reflectedUV = uv;
+            reflectedUV.y = clamp(waterline - (uv.y - waterline) * 0.58, 0.001, waterline);
+            reflectedUV.x += (broadWater + fineWater) * (0.0008 + bass * 0.0009);
+            float3 reflected = scene.sample(samp, reflectedUV).rgb;
+            float reflectionFade = waterMask * (0.035 + (1.0 - waterDepth) * 0.065);
+            color = mix(color, reflected, reflectionFade);
+            float brokenSpecular = pow(saturate(sin(uv.x * 96.0 + broadWater * 2.2 + time * 0.28) * 0.5 + 0.5), 8.0);
+            color += (1.0 - color) * brokenSpecular * waterMask * (0.012 + high * 0.024 + transient * 0.018);
+        }
 
         // Three perceptual bloom scales produce a crisp core, a medium halo and
         // a broad atmospheric glow. Four diagonal taps per scale keep this pass
@@ -323,6 +382,7 @@ struct GPUVertex {
 
 struct VisualizerMesh {
     var soft: [GPUVertex] = []
+    var volumes: [GPUVertex] = []
     var additive: [GPUVertex] = []
     var radials: [GPUVertex] = []
 }
@@ -339,6 +399,7 @@ struct GPUPostUniforms {
     var mode: SIMD4<Float>
     var structure: SIMD4<Float>
     var character: SIMD4<Float>
+    var atmosphere: SIMD4<Float>
 }
 
 struct GPUBackgroundUniforms {
@@ -408,6 +469,10 @@ struct PostProcessSettings {
     let warmth: Float
     let sectionProgress: Float
     let musicAwareness: Float
+    var atmosphereWaterStrength: Float = 0
+    var atmosphereWaterline: Float = 0.70
+    var atmosphereAirStrength: Float = 0
+    var atmosphereAirMode: Float = 0
 
     func uniforms(size: CGSize, historyValid: Bool) -> GPUPostUniforms {
         GPUPostUniforms(
@@ -416,7 +481,8 @@ struct PostProcessSettings {
             style: SIMD4(Float(time), integration, brilliance, trail),
             mode: SIMD4(colorRichness, depth, beatImpact, historyValid ? 1 : 0),
             structure: SIMD4(energy, buildup, climax, quiet),
-            character: SIMD4(transient, warmth, sectionProgress, musicAwareness)
+            character: SIMD4(transient, warmth, sectionProgress, musicAwareness),
+            atmosphere: SIMD4(atmosphereWaterStrength, atmosphereWaterline, atmosphereAirStrength, atmosphereAirMode)
         )
     }
 }

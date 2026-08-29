@@ -26,6 +26,7 @@ final class MetalRenderer {
     let ciContext: CIContext
     private let colorPipeline: MTLRenderPipelineState
     private let additiveColorPipeline: MTLRenderPipelineState
+    private let volumePipeline: MTLRenderPipelineState
     private let radialPipeline: MTLRenderPipelineState
     private let texturePipeline: MTLRenderPipelineState
     private let backgroundPipeline: MTLRenderPipelineState
@@ -89,6 +90,7 @@ final class MetalRenderer {
         let replace = Blend(src: .one, dst: .zero)
         guard let colorPipeline = pipeline("fragment_color", blend: alpha),
               let additiveColorPipeline = pipeline("fragment_color", blend: additive),
+              let volumePipeline = pipeline("fragment_radial", blend: alpha),
               let radialPipeline = pipeline("fragment_radial", blend: additive),
               let texturePipeline = pipeline("fragment_texture", blend: alpha),
               let backgroundPipeline = pipeline("fragment_background", blend: alpha),
@@ -97,6 +99,7 @@ final class MetalRenderer {
               let postPipeline = pipeline("fragment_post", blend: replace) else { return nil }
         self.colorPipeline = colorPipeline
         self.additiveColorPipeline = additiveColorPipeline
+        self.volumePipeline = volumePipeline
         self.radialPipeline = radialPipeline
         self.texturePipeline = texturePipeline
         self.backgroundPipeline = backgroundPipeline
@@ -155,6 +158,7 @@ final class MetalRenderer {
                 + (vignetteAlpha > 0 ? 6 : 0)
                 + (accentWash.w > 0.001 ? 6 : 0)
                 + mesh.soft.count
+                + mesh.volumes.count
                 + mesh.radials.count
                 + mesh.additive.count
                 + backgrounds.filter { $0.subjectMask != nil && backgroundMotion.smartCompositionEnabled }.count * 12
@@ -221,6 +225,9 @@ final class MetalRenderer {
         }
         if !mesh.soft.isEmpty {
             draw(mesh.soft, pipeline: colorPipeline, encoder: encoder)
+        }
+        if !mesh.volumes.isEmpty {
+            draw(mesh.volumes, pipeline: volumePipeline, encoder: encoder)
         }
         if !mesh.radials.isEmpty {
             draw(mesh.radials, pipeline: radialPipeline, encoder: encoder)

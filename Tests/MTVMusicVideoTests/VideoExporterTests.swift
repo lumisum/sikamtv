@@ -37,6 +37,8 @@ final class VideoExporterTests: XCTestCase {
         settings.aspectRatio = .square
         settings.template = .electronic
         settings.visualizer = .spectrum
+        settings.atmospherePreset = .rainyNight
+        settings.atmosphereIntensity = 0.62
         settings.backgroundTransition = .crossfade
         settings.backgroundTransitionDuration = 0.1
         let lyrics = [LRCLine(time: 0, text: "SikaMTV 导出测试")]

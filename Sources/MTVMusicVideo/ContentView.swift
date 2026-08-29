@@ -661,6 +661,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case template = "模板"
     case canvas = "画面"
     case visualizer = "视觉"
+    case atmosphere = "氛围"
     case lyrics = "歌词"
     case intro = "片头"
 
@@ -671,6 +672,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .template: return "square.grid.2x2"
         case .canvas: return "rectangle.on.rectangle"
         case .visualizer: return "waveform.path.ecg"
+        case .atmosphere: return "cloud.sun"
         case .lyrics: return "captions.bubble"
         case .intro: return "textformat"
         }
@@ -745,6 +747,7 @@ struct SettingsPanel: View {
         case .template: templateSettings
         case .canvas: canvasSettings
         case .visualizer: visualizerSettings
+        case .atmosphere: atmosphereSettings
         case .lyrics: lyricSettings
         case .intro: introSettings
         }
@@ -953,6 +956,72 @@ struct SettingsPanel: View {
                 }
             }
             Text("通常只需调整响应、位置、大小和光晕；其余参数可保持模板推荐值。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var atmosphereSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            InspectorSectionTitle(title: "环境氛围", icon: "cloud.sun")
+            Text("由您决定作品的意境；音乐只控制所选环境的速度、密度和触发强弱，不会自动更换类别。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker("氛围预置", selection: $workspace.settings.atmospherePreset) {
+                Text(AtmospherePreset.off.rawValue).tag(AtmospherePreset.off)
+                ForEach(["东方意境", "四季自然", "天气水域", "电影幻想"], id: \.self) { category in
+                    Section(category) {
+                        ForEach(AtmospherePreset.allCases.filter { $0 != .off && $0.category == category }) { preset in
+                            Text(preset.rawValue).tag(preset)
+                        }
+                    }
+                }
+            }
+
+            if workspace.settings.atmospherePreset == .off {
+                VStack(spacing: 7) {
+                    Image(systemName: "cloud.slash")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("未启用环境氛围").font(.subheadline.weight(.medium))
+                    Text("当前只渲染背景、音频可视化和歌词。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(workspace.settings.atmospherePreset.rawValue)
+                        .font(.subheadline.weight(.semibold))
+                    Text(workspace.settings.atmospherePreset.subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.065)))
+
+                SliderRow(title: "氛围强度", value: $workspace.settings.atmosphereIntensity, range: 0.15...1, displayMultiplier: 100, suffix: "%")
+                SliderRow(title: "音乐响应", value: $workspace.settings.atmosphereMusicResponse, range: 0...1, displayMultiplier: 100, suffix: "%")
+                SliderRow(title: "前景密度", value: $workspace.settings.atmosphereForegroundDensity, range: 0.15...1, displayMultiplier: 100, suffix: "%")
+
+                if workspace.settings.atmospherePreset.usesWater {
+                    Divider()
+                    Label("水面区域", systemImage: "water.waves").font(.subheadline.weight(.medium))
+                    SliderRow(title: "水位线", value: $workspace.settings.atmosphereWaterline, range: 0.48...0.88, displayMultiplier: 100, suffix: "%")
+                    Text("水位线以下会产生局部波浪折射；请根据背景中的真实水面位置调整。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Text("系统会按背景明暗和细节复杂度自动校准元素可见度；固定种子确保暂停、拖动预览与最终导出完全一致。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
