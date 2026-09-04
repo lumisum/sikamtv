@@ -28,6 +28,7 @@ final class AudioFeaturesTests: XCTestCase {
 
     func testSettingsRoundTripIncludesLyricAndVisualizerControls() throws {
         var settings = RenderSettings()
+        settings.lyricLanguage = .english
         settings.lyricAnimation = .scale
         settings.lyricAlignment = .leading
         settings.lyricPositionY = 0.71
@@ -92,6 +93,7 @@ final class AudioFeaturesTests: XCTestCase {
         XCTAssertEqual(settings.introAnimationStyle, .luminousRise)
         XCTAssertEqual(settings.lyricAnimation, .scroll)
         XCTAssertEqual(settings.lyricAnimationDuration, 0.62)
+        XCTAssertEqual(settings.lyricLanguage, .chinese)
     }
 
     func testProjectsSavedWithDirectorFieldsOpenAsDirectManualSettings() throws {

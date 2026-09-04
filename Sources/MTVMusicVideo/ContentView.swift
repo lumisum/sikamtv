@@ -1037,6 +1037,16 @@ struct SettingsPanel: View {
                     .buttonStyle(.borderless)
                     .font(.caption)
             }
+            Text("歌词语言").font(.caption.weight(.semibold))
+            Picker("歌词语言", selection: lyricLanguage) {
+                ForEach(LyricLanguage.allCases) { language in
+                    Text(language.rawValue).tag(language)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text(workspace.settings.lyricLanguage.subtitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             Text("字体").font(.caption.weight(.semibold))
             Picker("字体", selection: selectedFontID) {
                 Section("SikaMTV 默认字体") {
@@ -1147,6 +1157,13 @@ struct SettingsPanel: View {
                 workspace.selectedFont = font
                 workspace.settings.fontPostScriptName = font?.postScriptName ?? workspace.settings.fontPostScriptName
             }
+        )
+    }
+
+    private var lyricLanguage: Binding<LyricLanguage> {
+        Binding(
+            get: { workspace.settings.lyricLanguage },
+            set: { workspace.setLyricLanguage($0) }
         )
     }
 

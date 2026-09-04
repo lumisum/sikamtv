@@ -76,6 +76,7 @@ cp "$EXECUTABLE_PATH" "$CONTENTS_PATH/MacOS/$PRODUCT_NAME"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$CONTENTS_PATH/Info.plist"
 mkdir -p "$CONTENTS_PATH/Resources/Fonts"
 cp "$PROJECT_ROOT/Sources/MTVMusicVideo/Resources/Fonts/SikaDefault.ttf" "$CONTENTS_PATH/Resources/Fonts/SikaDefault.ttf"
+cp "$PROJECT_ROOT/Sources/MTVMusicVideo/Resources/Fonts/Cramaten-2.ttf" "$CONTENTS_PATH/Resources/Fonts/Cramaten-2.ttf"
 
 # Build a complete macOS icon set from the source PNG. The asset catalog is kept
 # in a temporary directory so packaging never depends on generated files in the repo.

@@ -296,6 +296,16 @@ final class WorkspaceState: ObservableObject {
         }
     }
 
+    func setLyricLanguage(_ language: LyricLanguage) {
+        guard settings.lyricLanguage != language else { return }
+        settings.lyricLanguage = language
+        let recommended = FontManager.recommendedPostScriptName(for: language)
+        if let font = fontManager.fonts.first(where: { $0.postScriptName == recommended }) {
+            selectedFont = font
+            settings.fontPostScriptName = font.postScriptName
+        }
+    }
+
     private func loadBackgrounds(from urls: [URL], completion: (([BackgroundMedia]) -> Void)? = nil) {
         isLoadingBackgrounds = true
         Task { @MainActor [weak self] in

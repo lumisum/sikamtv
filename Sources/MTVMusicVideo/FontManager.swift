@@ -12,7 +12,9 @@ struct FontOption: Identifiable, Hashable {
 
 @MainActor
 final class FontManager: ObservableObject {
-    nonisolated static let defaultPostScriptName = "sucaijishikangkangti"
+    nonisolated static let defaultChinesePostScriptName = "sucaijishikangkangti"
+    nonisolated static let defaultEnglishPostScriptName = "Cramaten"
+    nonisolated static let defaultPostScriptName = defaultChinesePostScriptName
 
     @Published private(set) var fonts: [FontOption] = []
     private var importedURLs: [URL] = []
@@ -34,7 +36,13 @@ final class FontManager: ObservableObject {
         let bundled = bundledURLs.compactMap { url -> FontOption? in
             guard let descriptor = descriptors(for: url).first,
                   let postScript = CTFontDescriptorCopyAttribute(descriptor, kCTFontNameAttribute) as? String else { return nil }
-            return FontOption(id: "bundled-" + postScript, displayName: "素材集市康康体", postScriptName: postScript, isImported: false, isBundled: true)
+            let display: String
+            switch postScript {
+            case Self.defaultChinesePostScriptName: display = "素材集市康康体（中文默认）"
+            case Self.defaultEnglishPostScriptName: display = "Cramaten（英文默认）"
+            default: display = (CTFontDescriptorCopyAttribute(descriptor, kCTFontDisplayNameAttribute) as? String) ?? url.deletingPathExtension().lastPathComponent
+            }
+            return FontOption(id: "bundled-" + postScript, displayName: display, postScriptName: postScript, isImported: false, isBundled: true)
         }
         let imported = importedURLs.compactMap { url -> FontOption? in
             guard let descriptor = descriptors(for: url).first,
@@ -57,13 +65,26 @@ final class FontManager: ObservableObject {
         return fonts.last(where: { $0.isImported })
     }
 
+    nonisolated static func recommendedPostScriptName(for language: LyricLanguage) -> String {
+        switch language {
+        case .chinese: return defaultChinesePostScriptName
+        case .english: return defaultEnglishPostScriptName
+        }
+    }
+
     private func registerBundledFonts() {
         var candidates: [URL] = []
         if let packaged = Bundle.main.url(forResource: "SikaDefault", withExtension: "ttf", subdirectory: "Fonts") {
             candidates.append(packaged)
         }
+        if let packaged = Bundle.main.url(forResource: "Cramaten-2", withExtension: "ttf", subdirectory: "Fonts") {
+            candidates.append(packaged)
+        }
         #if SWIFT_PACKAGE
         if let packageResource = Bundle.module.url(forResource: "SikaDefault", withExtension: "ttf", subdirectory: "Resources/Fonts") {
+            candidates.append(packageResource)
+        }
+        if let packageResource = Bundle.module.url(forResource: "Cramaten-2", withExtension: "ttf", subdirectory: "Resources/Fonts") {
             candidates.append(packageResource)
         }
         #endif

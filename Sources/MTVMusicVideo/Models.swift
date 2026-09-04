@@ -346,6 +346,19 @@ enum LyricAlignment: String, CaseIterable, Identifiable, Codable, Sendable {
     var id: String { rawValue }
 }
 
+enum LyricLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
+    case chinese = "中文"
+    case english = "英文"
+    var id: String { rawValue }
+
+    var subtitle: String {
+        switch self {
+        case .chinese: return "默认使用内置中文歌词字体"
+        case .english: return "自动切换到内置 Cramaten 英文歌词字体"
+        }
+    }
+}
+
 enum IntroAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendable {
     case luminousRise = "流光上浮"
     case cinematic = "电影淡入"
@@ -469,6 +482,7 @@ struct RenderSettings: Codable, Equatable, Sendable {
     var lyricAnimationDuration: Double = 0.62
     var lyricAnimation: LyricAnimation = .scroll
     var lyricAlignment: LyricAlignment = .center
+    var lyricLanguage: LyricLanguage = .chinese
     var fontPostScriptName: String = FontManager.defaultPostScriptName
 
     var introEnabled: Bool = true
@@ -493,7 +507,7 @@ struct RenderSettings: Codable, Equatable, Sendable {
         case sevenColorFlowEnabled, sevenColorFlowIntensity
         case atmospherePreset, atmosphereIntensity, atmosphereMusicResponse, atmosphereForegroundDensity, atmosphereWaterline
         case lyricSize, lyricPositionY, lyricWidth, lyricLineSpacing, lyricInactiveOpacity, lyricGlow, lyricAnimationDuration
-        case lyricAnimation, lyricAlignment, fontPostScriptName
+        case lyricAnimation, lyricAlignment, lyricLanguage, fontPostScriptName
         case introEnabled, songTitle, authorName, introShowsDate, introDuration, introAnimationDuration, introTitleSize, introAnimationStyle
     }
 
@@ -551,6 +565,7 @@ struct RenderSettings: Codable, Equatable, Sendable {
         lyricAnimationDuration = try container.decodeIfPresent(Double.self, forKey: .lyricAnimationDuration) ?? defaults.lyricAnimationDuration
         lyricAnimation = try container.decodeIfPresent(LyricAnimation.self, forKey: .lyricAnimation) ?? defaults.lyricAnimation
         lyricAlignment = try container.decodeIfPresent(LyricAlignment.self, forKey: .lyricAlignment) ?? defaults.lyricAlignment
+        lyricLanguage = try container.decodeIfPresent(LyricLanguage.self, forKey: .lyricLanguage) ?? defaults.lyricLanguage
         fontPostScriptName = try container.decodeIfPresent(String.self, forKey: .fontPostScriptName) ?? defaults.fontPostScriptName
         introEnabled = try container.decodeIfPresent(Bool.self, forKey: .introEnabled) ?? defaults.introEnabled
         songTitle = try container.decodeIfPresent(String.self, forKey: .songTitle) ?? defaults.songTitle
@@ -615,6 +630,7 @@ struct RenderSettings: Codable, Equatable, Sendable {
         try container.encode(lyricAnimationDuration, forKey: .lyricAnimationDuration)
         try container.encode(lyricAnimation, forKey: .lyricAnimation)
         try container.encode(lyricAlignment, forKey: .lyricAlignment)
+        try container.encode(lyricLanguage, forKey: .lyricLanguage)
         try container.encode(fontPostScriptName, forKey: .fontPostScriptName)
         try container.encode(introEnabled, forKey: .introEnabled)
         try container.encode(songTitle, forKey: .songTitle)
