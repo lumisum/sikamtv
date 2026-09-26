@@ -19,7 +19,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" Spacing="11" VerticalAlignment="Center">
-                <Border Width="30" Height="30" CornerRadius="9" Background="{StaticResource SikaAccentSoft}" ClipToBounds="True">
+                <Border Width="30" Height="30" CornerRadius="9" Background="{StaticResource SikaAccentSoft}">
                     <Image Source="ms-appx:///Assets/mtv.png" Stretch="UniformToFill" />
                 </Border>
                 <TextBlock Text="SikaMTV" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -122,7 +122,7 @@
                 </Grid>
 
                 <Viewbox Grid.Row="1" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Grid x:Name="PreviewFrame" HorizontalAlignment="Center" VerticalAlignment="Center" Width="360" Height="640" Background="#141720" ClipToBounds="True">
+                <Grid x:Name="PreviewFrame" HorizontalAlignment="Center" VerticalAlignment="Center" Width="360" Height="640" Background="#141720">
                     <Image x:Name="BackgroundImage" Stretch="UniformToFill" Visibility="Collapsed" />
                     <MediaPlayerElement x:Name="BackgroundVideo" AreTransportControlsEnabled="False" AutoPlay="False" IsHitTestVisible="False" Visibility="Collapsed" />
                     <Rectangle Fill="#50090A10" />
@@ -170,7 +170,7 @@
             </Grid>
 
             <Grid x:Name="SettingsPanel" Grid.Column="2" Padding="0" Background="{StaticResource SikaPanel}">
-                <TabView x:Name="SettingsTabs" IsAddTabButtonVisible="False" IsCloseButtonOverlay="False" TabWidthMode="Equal" Background="Transparent">
+                <TabView x:Name="SettingsTabs" IsAddTabButtonVisible="False" TabWidthMode="Equal" Background="Transparent">
                     <TabViewItem Header="画面" IsSelected="True">
                         <ScrollViewer Padding="16,14">
                             <StackPanel Spacing="14">
