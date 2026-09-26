@@ -1,0 +1,77 @@
+import XCTest
+@testable import MTVMusicVideo
+
+final class BackgroundTimelineTests: XCTestCase {
+    func testAudioDurationIsEvenlyDividedAcrossBackgrounds() {
+        let first = BackgroundTimeline.state(at: 24.9, duration: 100, itemCount: 4, transition: .none, transitionDuration: 1)
+        let second = BackgroundTimeline.state(at: 25.1, duration: 100, itemCount: 4, transition: .none, transitionDuration: 1)
+        XCTAssertEqual(first?.currentIndex, 0)
+        XCTAssertEqual(second?.currentIndex, 1)
+        XCTAssertEqual(second?.segmentDuration ?? 0, 25, accuracy: 0.001)
+    }
+
+    func testCrossfadeBeginsAtTheScheduledBoundary() {
+        let start = BackgroundTimeline.state(at: 25, duration: 100, itemCount: 4, transition: .crossfade, transitionDuration: 0.8)
+        let middle = BackgroundTimeline.state(at: 25.4, duration: 100, itemCount: 4, transition: .crossfade, transitionDuration: 0.8)
+        let finished = BackgroundTimeline.state(at: 25.9, duration: 100, itemCount: 4, transition: .crossfade, transitionDuration: 0.8)
+        XCTAssertEqual(start?.currentIndex, 0)
+        XCTAssertEqual(start?.nextIndex, 1)
+        XCTAssertEqual(middle?.transitionProgress ?? 0, 0.5, accuracy: 0.001)
+        XCTAssertEqual(finished?.currentIndex, 1)
+        XCTAssertNil(finished?.nextIndex)
+    }
+
+    func testSingleVideoUsesWholeProjectAsOneSegment() {
+        let state = BackgroundTimeline.state(at: 42, duration: 180, itemCount: 1, transition: .slide, transitionDuration: 1)
+        XCTAssertEqual(state?.currentIndex, 0)
+        XCTAssertNil(state?.nextIndex)
+        XCTAssertEqual(state?.currentLocalTime, 42)
+    }
+
+    func testSingleVideoLoopsUntilTheSongEnds() {
+        let video = BackgroundMedia(
+            url: URL(fileURLWithPath: "/tmp/background.mov"),
+            kind: .video,
+            duration: 12
+        )
+        let timeline = BackgroundTimeline.state(at: 42.5, duration: 180, itemCount: 1, transition: .none, transitionDuration: 0.8)
+
+        XCTAssertEqual(video.playbackTime(for: timeline?.currentLocalTime ?? 0), 6.5, accuracy: 0.001)
+    }
+
+    func testSingleVideoCrossfadesItsEndIntoItsBeginning() {
+        let state = BackgroundTimeline.state(
+            at: 11.5,
+            duration: 60,
+            itemCount: 1,
+            transition: .none,
+            transitionDuration: 1,
+            singleVideoDuration: 12
+        )
+
+        XCTAssertEqual(state?.currentIndex, 0)
+        XCTAssertEqual(state?.nextIndex, 0)
+        XCTAssertEqual(state?.currentLocalTime ?? 0, 11.5, accuracy: 0.001)
+        XCTAssertEqual(state?.nextLocalTime ?? 0, 0.5, accuracy: 0.001)
+        XCTAssertEqual(state?.transitionProgress ?? 0, 0.5, accuracy: 0.001)
+    }
+
+    func testSingleVideoContinuesFromTheCompletedBlendAfterLooping() {
+        let beforeLoop = BackgroundTimeline.state(at: 11.999, duration: 60, itemCount: 1, transition: .none, transitionDuration: 1, singleVideoDuration: 12)
+        let afterLoop = BackgroundTimeline.state(at: 12, duration: 60, itemCount: 1, transition: .none, transitionDuration: 1, singleVideoDuration: 12)
+
+        XCTAssertEqual(beforeLoop?.nextLocalTime ?? 0, 0.999, accuracy: 0.002)
+        XCTAssertNil(afterLoop?.nextIndex)
+        XCTAssertEqual(afterLoop?.currentLocalTime ?? 0, 1, accuracy: 0.001)
+    }
+
+    func testLoopingBGMUsesOverlappingClipsUntilArticleEnds() {
+        let clips = BackgroundAudioMixer.loopClips(sourceDuration: 8, projectDuration: 25, transitionDuration: 1)
+        XCTAssertGreaterThan(clips.count, 3)
+        XCTAssertEqual(clips.first?.destinationStart ?? -1, 0, accuracy: 0.001)
+        XCTAssertGreaterThan(clips.last?.destinationStart ?? 0, 16)
+        XCTAssertLessThanOrEqual((clips.last?.destinationStart ?? 0) + (clips.last?.duration ?? 0), 25.001)
+        XCTAssertGreaterThan(clips[1].fadeIn, 0)
+        XCTAssertGreaterThan(clips[0].fadeOut, 0)
+    }
+}

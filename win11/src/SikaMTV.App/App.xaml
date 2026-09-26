@@ -1,0 +1,19 @@
+<Application
+    x:Class="SikaMTV.Win11.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <SolidColorBrush x:Key="SikaCanvas" Color="#101116" />
+            <SolidColorBrush x:Key="SikaPanel" Color="#171920" />
+            <SolidColorBrush x:Key="SikaPanelRaised" Color="#20232C" />
+            <SolidColorBrush x:Key="SikaAccent" Color="#B69CFF" />
+            <SolidColorBrush x:Key="SikaAccentSoft" Color="#342B49" />
+            <SolidColorBrush x:Key="SikaMuted" Color="#9698A4" />
+            <SolidColorBrush x:Key="SikaLine" Color="#2A2D36" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

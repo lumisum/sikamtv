@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SikaMTV.Core", "src\SikaMTV.Core\SikaMTV.Core.csproj", "{80D886A4-660D-4567-BF10-5A6EBE45B52D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SikaMTV.App", "src\SikaMTV.App\SikaMTV.App.csproj", "{1CE62515-2E5B-4474-AD28-568F0D79E94E}"
+EndProject
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "SikaMTV.Gpu", "native\SikaMTV.Gpu\SikaMTV.Gpu.vcxproj", "{718A1F04-AF21-4B87-BF58-78CBFA63543D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{80D886A4-660D-4567-BF10-5A6EBE45B52D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{80D886A4-660D-4567-BF10-5A6EBE45B52D}.Debug|x64.Build.0 = Debug|Any CPU
+		{80D886A4-660D-4567-BF10-5A6EBE45B52D}.Release|x64.ActiveCfg = Release|Any CPU
+		{80D886A4-660D-4567-BF10-5A6EBE45B52D}.Release|x64.Build.0 = Release|Any CPU
+		{1CE62515-2E5B-4474-AD28-568F0D79E94E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1CE62515-2E5B-4474-AD28-568F0D79E94E}.Debug|x64.Build.0 = Debug|Any CPU
+		{1CE62515-2E5B-4474-AD28-568F0D79E94E}.Release|x64.ActiveCfg = Release|Any CPU
+		{1CE62515-2E5B-4474-AD28-568F0D79E94E}.Release|x64.Build.0 = Release|Any CPU
+		{718A1F04-AF21-4B87-BF58-78CBFA63543D}.Debug|x64.ActiveCfg = Debug|x64
+		{718A1F04-AF21-4B87-BF58-78CBFA63543D}.Debug|x64.Build.0 = Debug|x64
+		{718A1F04-AF21-4B87-BF58-78CBFA63543D}.Release|x64.ActiveCfg = Release|x64
+		{718A1F04-AF21-4B87-BF58-78CBFA63543D}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+EndGlobal

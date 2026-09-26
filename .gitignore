@@ -6,3 +6,19 @@ dist/
 xcuserdata/
 .DS_Store
 **/.DS_Store
+
+# Windows / Visual Studio
+**/bin/
+**/obj/
+**/out/
+**/.vs/
+**/x64/
+**/ARM64/
+/win11/artifacts/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+*.pdb
+*.ilk
+*.aps

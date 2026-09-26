@@ -1,0 +1,372 @@
+<Window
+    x:Class="SikaMTV.Win11.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="SikaMTV">
+    <Grid Background="{StaticResource SikaCanvas}" RowSpacing="0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="62" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="194" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Padding="20,0" Background="#14161C" ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="11" VerticalAlignment="Center">
+                <Border Width="30" Height="30" CornerRadius="9" Background="{StaticResource SikaAccentSoft}" ClipToBounds="True">
+                    <Image Source="ms-appx:///Assets/mtv.png" Stretch="UniformToFill" />
+                </Border>
+                <TextBlock Text="SikaMTV" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Text="WIN 11" FontSize="10" CharacterSpacing="120" Foreground="{StaticResource SikaMuted}" VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <Border Background="#1C2725" CornerRadius="12" Padding="10,5">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <Ellipse x:Name="GpuStatusDot" Width="7" Height="7" Fill="#8A91A4" VerticalAlignment="Center" />
+                        <TextBlock x:Name="GpuStatusText" Text="正在检查 GPU" FontSize="11" Foreground="#C2C5CE" />
+                    </StackPanel>
+                </Border>
+                <Button x:Name="ImportAssetsButton" Click="ImportAssetsButton_Click" Style="{StaticResource AccentButtonStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE710;" FontSize="13" />
+                        <TextBlock Text="导入素材" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnSpacing="1" Background="{StaticResource SikaLine}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="270" />
+                <ColumnDefinition Width="*" MinWidth="520" />
+                <ColumnDefinition Width="328" />
+            </Grid.ColumnDefinitions>
+
+            <Grid x:Name="AssetPanel" Grid.Column="0" Padding="16" Background="{StaticResource SikaPanel}" RowSpacing="14">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel Spacing="3">
+                    <TextBlock Text="素材库" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock Text="导入素材后加入项目工作区" FontSize="11" Foreground="{StaticResource SikaMuted}" />
+                </StackPanel>
+                <Grid Grid.Row="1" ColumnSpacing="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="AssetSearchBox" PlaceholderText="搜索图片、视频、音频和字幕" TextChanged="AssetSearchBox_TextChanged" />
+                    <Button Grid.Column="1" Click="ImportAssetsButton_Click" ToolTipService.ToolTip="添加素材">
+                        <FontIcon Glyph="&#xE710;" />
+                    </Button>
+                </Grid>
+                <ListView x:Name="AssetsList" Grid.Row="2" SelectionMode="Single" CanDragItems="True" DragItemsStarting="AssetsList_DragItemsStarting" Background="Transparent" BorderThickness="0">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Padding="8,7" ColumnSpacing="9">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="32" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Width="32" Height="32" CornerRadius="8" Background="{StaticResource SikaPanelRaised}">
+                                    <FontIcon Glyph="{Binding IconGlyph}" FontSize="14" Foreground="{StaticResource SikaAccent}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock Text="{Binding Name}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding TypeLabel}" FontSize="10" Foreground="{StaticResource SikaMuted}" />
+                                </StackPanel>
+                                <Button Grid.Column="2" Tag="{Binding}" Click="AddAssetToProject_Click" ToolTipService.ToolTip="加入项目工作区" Padding="7,5">
+                                    <FontIcon Glyph="&#xE710;" FontSize="11" />
+                                </Button>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="7">
+                    <TextBlock x:Name="AssetCountText" Text="0 个素材" FontSize="10" Foreground="{StaticResource SikaMuted}" />
+                    <TextBlock Text="·" Foreground="{StaticResource SikaMuted}" />
+                    <TextBlock Text="可拖入素材" FontSize="10" Foreground="{StaticResource SikaMuted}" />
+                </StackPanel>
+            </Grid>
+
+            <Grid x:Name="PreviewDropSurface" Grid.Column="1" Padding="22" Background="#0C0D12" AllowDrop="True" DragOver="PreviewDropSurface_DragOver" Drop="PreviewDropSurface_Drop" RowSpacing="14">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="预览" FontSize="17" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PreviewStatusText" Text="添加背景、音乐与歌词，开始创作" FontSize="11" Foreground="{StaticResource SikaMuted}" />
+                    </StackPanel>
+                    <ComboBox x:Name="AspectRatioBox" Grid.Column="1" Width="140" SelectedIndex="0" SelectionChanged="AspectRatioBox_SelectionChanged">
+                        <ComboBoxItem Content="9:16  竖屏" Tag="Portrait916" />
+                        <ComboBoxItem Content="16:9  横屏" Tag="Landscape169" />
+                        <ComboBoxItem Content="1:1  方形" Tag="Square" />
+                    </ComboBox>
+                </Grid>
+
+                <Viewbox Grid.Row="1" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid x:Name="PreviewFrame" HorizontalAlignment="Center" VerticalAlignment="Center" Width="360" Height="640" Background="#141720" ClipToBounds="True">
+                    <Image x:Name="BackgroundImage" Stretch="UniformToFill" Visibility="Collapsed" />
+                    <MediaPlayerElement x:Name="BackgroundVideo" AreTransportControlsEnabled="False" AutoPlay="False" IsHitTestVisible="False" Visibility="Collapsed" />
+                    <Rectangle Fill="#50090A10" />
+                    <SwapChainPanel x:Name="VisualizerPanel" IsHitTestVisible="False" Loaded="VisualizerPanel_Loaded" SizeChanged="VisualizerPanel_SizeChanged" />
+                    <StackPanel x:Name="PreviewPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+                        <Border Width="58" Height="58" CornerRadius="20" Background="#222331">
+                            <FontIcon Glyph="&#xE8D6;" FontSize="23" Foreground="{StaticResource SikaAccent}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="预览画面" FontSize="13" HorizontalAlignment="Center" />
+                        <TextBlock Text="拖入背景素材开始" FontSize="11" Foreground="{StaticResource SikaMuted}" HorizontalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel x:Name="LyricsOverlay" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" MaxWidth="310">
+                        <TextBlock x:Name="Previous2LyricText" FontSize="12" Opacity="0.32" TextAlignment="Center" TextWrapping="Wrap" />
+                        <TextBlock x:Name="PreviousLyricText" FontSize="15" Opacity="0.56" TextAlignment="Center" TextWrapping="Wrap" />
+                        <TextBlock x:Name="CurrentLyricText" FontSize="21" FontWeight="SemiBold" Foreground="White" TextAlignment="Center" TextWrapping="Wrap" MaxHeight="390" />
+                        <TextBlock x:Name="NextLyricText" FontSize="15" Opacity="0.56" TextAlignment="Center" TextWrapping="Wrap" />
+                        <TextBlock x:Name="Next2LyricText" FontSize="12" Opacity="0.32" TextAlignment="Center" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel x:Name="IntroOverlay" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="18,70,18,0" Spacing="10" MaxWidth="320" IsHitTestVisible="False" Visibility="Collapsed">
+                        <TextBlock x:Name="IntroTitleText" Text="" FontSize="34" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
+                        <Rectangle Height="1" Width="58" Fill="{StaticResource SikaAccent}" HorizontalAlignment="Center" Opacity="0.8" />
+                        <TextBlock x:Name="IntroAuthorText" Text="鹿鸣松(Lumisum)" FontSize="15" TextAlignment="Center" />
+                        <TextBlock x:Name="IntroDateText" FontSize="11" Foreground="{StaticResource SikaMuted}" TextAlignment="Center" />
+                    </StackPanel>
+                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="14" Background="#8A11131B" CornerRadius="10" Padding="9,5">
+                        <TextBlock x:Name="PreviewModeText" Text="歌词视频 · Ethereal" FontSize="10" />
+                    </Border>
+                </Grid>
+                </Viewbox>
+
+                <Grid Grid.Row="2" ColumnSpacing="11">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="PlayButton" Click="PlayButton_Click" ToolTipService.ToolTip="播放">
+                        <FontIcon x:Name="PlayIcon" Glyph="&#xE768;" />
+                    </Button>
+                    <TextBlock x:Name="CurrentTimeText" Grid.Column="1" Text="00:00" FontSize="11" Foreground="{StaticResource SikaMuted}" VerticalAlignment="Center" />
+                    <Slider x:Name="PlaybackSlider" Grid.Column="2" Minimum="0" Maximum="1" ValueChanged="PlaybackSlider_ValueChanged" VerticalAlignment="Center" />
+                    <TextBlock x:Name="DurationText" Grid.Column="3" Text="00:00" FontSize="11" Foreground="{StaticResource SikaMuted}" VerticalAlignment="Center" />
+                </Grid>
+            </Grid>
+
+            <Grid x:Name="SettingsPanel" Grid.Column="2" Padding="0" Background="{StaticResource SikaPanel}">
+                <TabView x:Name="SettingsTabs" IsAddTabButtonVisible="False" IsCloseButtonOverlay="False" TabWidthMode="Equal" Background="Transparent">
+                    <TabViewItem Header="画面" IsSelected="True">
+                        <ScrollViewer Padding="16,14">
+                            <StackPanel Spacing="14">
+                                <TextBlock Text="背景质感" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock Text="模糊" FontSize="11" />
+                                <Slider x:Name="BlurSlider" Minimum="0" Maximum="1" Value="0.18" />
+                                <TextBlock Text="边缘暗化" FontSize="11" />
+                                <Slider x:Name="VignetteSlider" Minimum="0" Maximum="1" Value="0.24" />
+                                <TextBlock Text="色彩饱和度" FontSize="11" />
+                                <Slider x:Name="SaturationSlider" Minimum="0" Maximum="2" Value="1" />
+                                <ToggleSwitch x:Name="SlowZoomToggle" Header="静态图片缓慢缩放" IsOn="True" />
+                                <ToggleSwitch x:Name="VideoLoopToggle" Header="背景视频循环" IsOn="True" Toggled="VideoSettings_Toggled" />
+                                <ToggleSwitch x:Name="BackgroundVideoAudioToggle" Header="使用背景视频声音" IsOn="False" Toggled="VideoSettings_Toggled" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabViewItem>
+                    <TabViewItem Header="视觉">
+                        <ScrollViewer Padding="16,14">
+                            <StackPanel Spacing="13">
+                                <TextBlock Text="音乐视觉" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock Text="整体模板" FontSize="11" />
+                                <ComboBox x:Name="TemplateBox" SelectedIndex="1" SelectionChanged="TemplateBox_SelectionChanged">
+                                    <ComboBoxItem Content="Zen" />
+                                    <ComboBoxItem Content="Ethereal" />
+                                    <ComboBoxItem Content="Minimal" />
+                                    <ComboBoxItem Content="Cinema" />
+                                    <ComboBoxItem Content="Electronic" />
+                                </ComboBox>
+                                <TextBlock Text="可视化类型" FontSize="11" />
+                                <ComboBox x:Name="VisualizerBox" SelectedIndex="5">
+                                    <ComboBoxItem Content="Wave · 丝绸波形" />
+                                    <ComboBoxItem Content="Spectrum · 动态频谱" />
+                                    <ComboBoxItem Content="Mirror · 镜像地平线" />
+                                    <ComboBoxItem Content="Circle · 呼吸光环" />
+                                    <ComboBoxItem Content="Ripple · 液态水波" />
+                                    <ComboBoxItem Content="Aurora · 极光帷幕" />
+                                    <ComboBoxItem Content="Prism · 棱镜隧道" />
+                                    <ComboBoxItem Content="Nebula · 星尘星云" />
+                                    <ComboBoxItem Content="Flower · 万象花镜" />
+                                    <ComboBoxItem Content="Starfield · 星河跃迁" />
+                                    <ComboBoxItem Content="Border · 流光边界" />
+                                </ComboBox>
+                                <TextBlock Text="响应强度" FontSize="11" />
+                                <Slider x:Name="VisualizerIntensitySlider" Minimum="0" Maximum="1" Value="0.74" />
+                                <TextBlock Text="可视化大小" FontSize="11" />
+                                <Slider x:Name="VisualizerScaleSlider" Minimum="0.4" Maximum="1.5" Value="1" />
+                                <TextBlock Text="音乐响应颜色" FontSize="11" />
+                                <ToggleSwitch x:Name="RainbowToggle" Header="七色流光" IsOn="True" />
+                                <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Message="高性能模式优先将合成任务提交到 NVIDIA GPU。" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabViewItem>
+                    <TabViewItem Header="歌词">
+                        <ScrollViewer Padding="16,14">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="文字内容" FontSize="16" FontWeight="SemiBold" />
+                                <ComboBox x:Name="TextModeBox" SelectedIndex="0" SelectionChanged="TextModeBox_SelectionChanged">
+                                    <ComboBoxItem Content="歌词视频" />
+                                    <ComboBoxItem Content="文章阅读" />
+                                </ComboBox>
+                                <TextBox x:Name="ArticleTextBox" Header="文章" PlaceholderText="粘贴或导入文章，BGM 会循环到全文播放完成" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="170" Visibility="Collapsed" />
+                                <Button x:Name="ImportArticleButton" Click="ImportArticleButton_Click" Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE8A5;" FontSize="12" />
+                                        <TextBlock Text="导入 TXT / Markdown" />
+                                    </StackPanel>
+                                </Button>
+                                <StackPanel x:Name="ArticleParameters" Spacing="10" Visibility="Collapsed">
+                                    <TextBlock Text="阅读速度（中文按字 / 英文按词）" FontSize="11" />
+                                    <Slider x:Name="ArticleRateSlider" Minimum="120" Maximum="320" Value="220" ValueChanged="ArticleSettings_ValueChanged" />
+                                    <TextBlock x:Name="ArticleDurationText" Text="文章时长会根据阅读速度计算" FontSize="10" Foreground="{StaticResource SikaMuted}" />
+                                    <TextBlock Text="文章字号" FontSize="11" />
+                                    <Slider x:Name="ArticleFontSizeSlider" Minimum="22" Maximum="56" Value="38" />
+                                    <TextBlock Text="行间距" FontSize="11" />
+                                    <Slider x:Name="ArticleLineSpacingSlider" Minimum="1.15" Maximum="2.2" Value="1.68" />
+                                    <TextBlock Text="结尾停留" FontSize="11" />
+                                    <Slider x:Name="ArticleEndHoldSlider" Minimum="1" Maximum="8" Value="3" />
+                                </StackPanel>
+                                <TextBlock Text="字幕语言" FontSize="11" />
+                                <ComboBox x:Name="LanguageBox" SelectedIndex="0" SelectionChanged="LanguageBox_SelectionChanged">
+                                    <ComboBoxItem Content="中文" />
+                                    <ComboBoxItem Content="英文" />
+                                </ComboBox>
+                                <TextBlock Text="字体" FontSize="11" />
+                                <ComboBox x:Name="FontBox" SelectedIndex="1" SelectionChanged="FontBox_SelectionChanged">
+                                    <ComboBoxItem Content="系统默认（Segoe UI）" Tag="Segoe UI" />
+                                    <ComboBoxItem Content="素材集市康康体（中文默认）" Tag="ms-appx:///Assets/Fonts/SikaDefault.ttf#素材集市康康体" />
+                                    <ComboBoxItem Content="Cramaten（英文默认）" Tag="ms-appx:///Assets/Fonts/Cramaten-2.ttf#Cramaten" />
+                                    <ComboBoxItem Content="Microsoft YaHei UI" Tag="Microsoft YaHei UI" />
+                                    <ComboBoxItem Content="Microsoft YaHei" />
+                                    <ComboBoxItem Content="SimSun" />
+                                </ComboBox>
+                                <Button x:Name="ImportFontButton" Click="ImportFontButton_Click">导入 TTF / OTF 字体</Button>
+                                <TextBlock Text="请确认您拥有该字体用于当前作品的合法授权。软件只负责使用您提供的字体生成画面，不提供字体版权授权。" FontSize="10" Foreground="{StaticResource SikaMuted}" TextWrapping="Wrap" />
+                                <TextBlock Text="字体大小" FontSize="11" />
+                                <Slider x:Name="LyricFontSizeSlider" Minimum="24" Maximum="76" Value="46" ValueChanged="LyricsStyle_ValueChanged" />
+                                <TextBlock Text="垂直位置" FontSize="11" />
+                                <Slider x:Name="LyricPositionSlider" Minimum="0.28" Maximum="0.82" Value="0.60" ValueChanged="LyricsStyle_ValueChanged" />
+                                <TextBlock Text="切换动画" FontSize="11" />
+                                <ComboBox x:Name="LyricAnimationBox" SelectedIndex="0">
+                                    <ComboBoxItem Content="连续上移" />
+                                    <ComboBoxItem Content="柔和淡入" />
+                                    <ComboBoxItem Content="呼吸缩放" />
+                                    <ComboBoxItem Content="渐进显现" />
+                                    <ComboBoxItem Content="光晕绽放" />
+                                </ComboBox>
+                                <TextBlock Text="容错显示" FontSize="11" />
+                                <ComboBox x:Name="LyricWindowBox" SelectedIndex="1">
+                                    <ComboBoxItem Content="3 句" />
+                                    <ComboBoxItem Content="5 句" />
+                                </ComboBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabViewItem>
+                    <TabViewItem Header="片头">
+                        <ScrollViewer Padding="16,14">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="片头信息" FontSize="16" FontWeight="SemiBold" />
+                                <TextBox x:Name="SongTitleBox" Header="歌名" PlaceholderText="输入歌名" />
+                                <TextBox x:Name="AuthorNameBox" Header="作者" Text="鹿鸣松(Lumisum)" />
+                                <ToggleSwitch x:Name="ShowIntroDateToggle" Header="显示生成日期" IsOn="True" Toggled="IntroSettings_Toggled" />
+                                <TextBlock Text="片头时长" FontSize="11" />
+                                <Slider x:Name="IntroDurationSlider" Minimum="2" Maximum="20" Value="12" />
+                                <TextBlock Text="动画" FontSize="11" />
+                                <ComboBox x:Name="IntroAnimationBox" SelectedIndex="0">
+                                    <ComboBoxItem Content="流光上浮" />
+                                    <ComboBoxItem Content="电影淡入" />
+                                    <ComboBoxItem Content="简约显现" />
+                                </ComboBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabViewItem>
+                </TabView>
+            </Grid>
+        </Grid>
+
+        <Grid x:Name="ProjectWorkspace" Grid.Row="2" Padding="20,14" Background="#14161C" ColumnSpacing="18" AllowDrop="True" DragOver="Workspace_DragOver" Drop="Workspace_Drop">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="10">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="项目工作区" FontSize="13" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="1" Text="只有加入工作区的素材会用于预览和生成" FontSize="10" Foreground="{StaticResource SikaMuted}" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Padding="12,9" CornerRadius="10" Background="{StaticResource SikaPanel}" BorderBrush="{StaticResource SikaLine}" BorderThickness="1">
+                        <Grid ColumnSpacing="5"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3"><TextBlock Text="背景" FontSize="10" Foreground="{StaticResource SikaMuted}" /><TextBlock x:Name="WorkspaceBackgroundText" Text="未添加 · 图片 / 视频" FontSize="11" TextTrimming="CharacterEllipsis" /></StackPanel>
+                            <Button x:Name="ClearBackgroundButton" Grid.Column="1" Tag="Background" Click="ClearWorkspaceSlot_Click" ToolTipService.ToolTip="清除背景" Padding="5,3" VerticalAlignment="Center"><FontIcon Glyph="&#xE711;" FontSize="10" /></Button>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="1" Padding="12,9" CornerRadius="10" Background="{StaticResource SikaPanel}" BorderBrush="{StaticResource SikaLine}" BorderThickness="1">
+                        <Grid ColumnSpacing="5"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3"><TextBlock Text="音乐" FontSize="10" Foreground="{StaticResource SikaMuted}" /><TextBlock x:Name="WorkspaceAudioText" Text="未添加 · WAV / MP3 / M4A" FontSize="11" TextTrimming="CharacterEllipsis" /></StackPanel>
+                            <Button x:Name="ClearAudioButton" Grid.Column="1" Tag="Audio" Click="ClearWorkspaceSlot_Click" ToolTipService.ToolTip="清除音频" Padding="5,3" VerticalAlignment="Center"><FontIcon Glyph="&#xE711;" FontSize="10" /></Button>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Padding="12,9" CornerRadius="10" Background="{StaticResource SikaPanel}" BorderBrush="{StaticResource SikaLine}" BorderThickness="1">
+                        <Grid ColumnSpacing="5"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3"><TextBlock Text="歌词 / 文章" FontSize="10" Foreground="{StaticResource SikaMuted}" /><TextBlock x:Name="WorkspaceTextText" Text="未添加 · LRC / SRT / TXT" FontSize="11" TextTrimming="CharacterEllipsis" /></StackPanel>
+                            <Button x:Name="ClearTextButton" Grid.Column="1" Tag="Text" Click="ClearWorkspaceSlot_Click" ToolTipService.ToolTip="清除歌词 / 文章" Padding="5,3" VerticalAlignment="Center"><FontIcon Glyph="&#xE711;" FontSize="10" /></Button>
+                        </Grid>
+                    </Border>
+                    <Button Grid.Column="3" x:Name="ClearWorkspaceButton" Click="ClearWorkspaceButton_Click" ToolTipService.ToolTip="清空项目工作区">
+                        <FontIcon Glyph="&#xE74D;" />
+                    </Button>
+                </Grid>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <StackPanel Spacing="2">
+                    <TextBlock Text="MP4 · H.264 + AAC" FontSize="11" HorizontalAlignment="Right" />
+                    <TextBlock Text="1080P · 30 FPS" FontSize="10" Foreground="{StaticResource SikaMuted}" HorizontalAlignment="Right" />
+                </StackPanel>
+                <StackPanel x:Name="ExportProgressPanel" Visibility="Collapsed" VerticalAlignment="Center" Width="190" Spacing="4">
+                    <TextBlock x:Name="ExportStatusText" Text="准备导出…" FontSize="10" Foreground="{StaticResource SikaMuted}" HorizontalAlignment="Right" />
+                    <ProgressBar x:Name="ExportProgressBar" Minimum="0" Maximum="100" Value="0" Height="4" />
+                </StackPanel>
+                <Button x:Name="GenerateButton" Click="GenerateButton_Click" Style="{StaticResource AccentButtonStyle}" IsEnabled="False">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon x:Name="GenerateIcon" Glyph="&#xE768;" FontSize="12" />
+                        <TextBlock x:Name="GenerateLabel" Text="生成视频" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
