@@ -72,8 +72,8 @@ public sealed partial class MainWindow : Window
         };
         SongTitleBox.TextChanged += (_, _) => UpdateIntroText();
         AuthorNameBox.TextChanged += (_, _) => UpdateIntroText();
-        PlaybackSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => _isScrubbing = true), true);
-        PlaybackSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, _) => _isScrubbing = false), true);
+        PlaybackSlider.PointerPressed += (_, _) => _isScrubbing = true;
+        PlaybackSlider.PointerReleased += (_, _) => _isScrubbing = false;
         _backgroundPlayer.IsMuted = true;
         BackgroundVideo.SetMediaPlayer(_backgroundPlayer);
         _playbackTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
@@ -276,13 +276,14 @@ public sealed partial class MainWindow : Window
                     transform,
                     ExifOrientationMode.RespectExifOrientation,
                     ColorManagementMode.DoNotColorManage);
-                var buffer = new Windows.Storage.Streams.Buffer(checked(softwareBitmap.PixelWidth * softwareBitmap.PixelHeight * 4));
+                var bufferCapacity = checked((uint)(softwareBitmap.PixelWidth * softwareBitmap.PixelHeight * 4));
+                var buffer = new Windows.Storage.Streams.Buffer(bufferCapacity);
                 softwareBitmap.CopyToBuffer(buffer);
                 _backgroundPixels = new byte[checked((int)buffer.Length)];
                 using var dataReader = DataReader.FromBuffer(buffer);
                 dataReader.ReadBytes(_backgroundPixels);
-                _backgroundPixelWidth = softwareBitmap.PixelWidth;
-                _backgroundPixelHeight = softwareBitmap.PixelHeight;
+                _backgroundPixelWidth = checked((uint)softwareBitmap.PixelWidth);
+                _backgroundPixelHeight = checked((uint)softwareBitmap.PixelHeight);
                 CommitGpuBackground();
             }
         }
