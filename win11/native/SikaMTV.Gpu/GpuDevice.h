@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <unknwn.h>
 
 #if defined(SIKAMTV_GPU_EXPORTS)
 #define SIKAMTV_GPU_API extern "C" __declspec(dllexport)

@@ -4,6 +4,8 @@
 #include <Windows.h>
 #include <d3d11.h>
 #include <mfapi.h>
+#include <mfidl.h>
+#include <mfobjects.h>
 #include <mferror.h>
 #include <mfreadwrite.h>
 #include <propvarutil.h>
@@ -429,7 +431,6 @@ namespace
         ComPtr<IMFAttributes> attributes;
         auto result = MFCreateAttributes(attributes.GetAddressOf(), 2);
         if (FAILED(result)) return result;
-        attributes->SetUINT32(MF_SOURCE_READER_ENABLE_AUDIO_PROCESSING, TRUE);
         result = MFCreateSourceReaderFromURL(path.c_str(), attributes.Get(), reader.GetAddressOf());
         if (FAILED(result)) return result;
 

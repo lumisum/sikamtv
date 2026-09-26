@@ -549,7 +549,9 @@ int __cdecl SikaMTV_GetFontFamily(const wchar_t* path, wchar_t* familyName, int 
     names->FindLocaleName(L"zh-cn", &localeIndex, &localeFound);
     if (!localeFound) names->FindLocaleName(L"en-us", &localeIndex, &localeFound);
     if (!localeFound) localeIndex = 0;
-    const auto length = names->GetStringLength(localeIndex);
+    UINT32 length = 0;
+    result = names->GetStringLength(localeIndex, &length);
+    if (FAILED(result)) return result;
     if (length + 1 > static_cast<UINT32>(capacity)) return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
     std::vector<wchar_t> name(length + 1);
     result = names->GetString(localeIndex, name.data(), static_cast<UINT32>(name.size()));
