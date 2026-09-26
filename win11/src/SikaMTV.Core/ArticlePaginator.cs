@@ -98,13 +98,12 @@ public static class ArticlePaginator
     private static bool IsReadingCharacter(string element) => element.EnumerateRunes().Any(rune =>
         {
             var category = Rune.GetUnicodeCategory(rune);
-            return !Rune.IsWhiteSpace(rune) && category is not (
-                UnicodeCategory.ConnectorPunctuation or UnicodeCategory.DashPunctuation or
-                UnicodeCategory.OpenPunctuation or UnicodeCategory.ClosePunctuation or
-                UnicodeCategory.InitialQuotePunctuation or UnicodeCategory.FinalQuotePunctuation or
-                UnicodeCategory.OtherPunctuation);
+        return !Rune.IsWhiteSpace(rune) && category is not (
+            UnicodeCategory.ConnectorPunctuation or UnicodeCategory.DashPunctuation or
+            UnicodeCategory.OpenPunctuation or UnicodeCategory.ClosePunctuation or
+            UnicodeCategory.InitialQuotePunctuation or UnicodeCategory.FinalQuotePunctuation or
+            UnicodeCategory.OtherPunctuation);
         });
-    }
 
     private static bool IsNaturalBreak(string element, bool english) =>
         element is "。" or "！" or "？" or "；" or "." or "!" or "?" or ";" ||
