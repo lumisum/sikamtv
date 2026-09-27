@@ -26,7 +26,8 @@ namespace SikaMTV.Win11;
 
 public sealed partial class MainWindow : Window
 {
-    private sealed record BackgroundFrameData(byte[] Pixels, byte[] SubjectMask, uint Width, uint Height, Vector3 Primary, Vector3 Secondary);
+    private readonly record struct BackgroundContrastSample(float Average, float Complexity, float BrightFraction);
+    private sealed record BackgroundFrameData(byte[] Pixels, byte[] SubjectMask, uint Width, uint Height, Vector3 Primary, Vector3 Secondary, BackgroundContrastSample Contrast);
     private readonly ObservableCollection<MediaEntry> _assets = [];
     private readonly List<MediaEntry> _allAssets = [];
     private readonly List<MediaEntry> _backgroundAssets = [];
@@ -35,6 +36,7 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, byte[]> _subjectMaskCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _subjectMaskCacheOrder = new();
     private readonly Dictionary<string, (Vector3 Primary, Vector3 Secondary)> _backgroundPaletteCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, BackgroundContrastSample> _backgroundContrastCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly MediaPlayer _audioPlayer = new();
     private readonly MediaPlayer _backgroundPlayer = new();
     private readonly SemaphoreSlim _subjectAnalysisLock = new(1, 1);
@@ -47,13 +49,19 @@ public sealed partial class MainWindow : Window
     private readonly Microsoft.UI.Xaml.Media.ScaleTransform _introScale = new();
     private readonly Microsoft.UI.Xaml.Media.TranslateTransform _lyricTranslate = new();
     private readonly Microsoft.UI.Xaml.Media.ScaleTransform _lyricScale = new();
+    private readonly Microsoft.UI.Xaml.Media.TranslateTransform _articleCurrentTranslate = new();
+    private readonly Microsoft.UI.Xaml.Media.TranslateTransform _articleNextTranslate = new();
     private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _lyricWhiteBrush = new(Windows.UI.Color.FromArgb(255, 255, 255, 255));
     private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _lyricAccentBrush = new(Windows.UI.Color.FromArgb(255, 197, 176, 255));
+    private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _articlePanelBrush = new(Windows.UI.Color.FromArgb(170, 2, 2, 2));
+    private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _articleBorderBrush = new(Windows.UI.Color.FromArgb(36, 182, 156, 255));
     private readonly Dictionary<TextBlock, DropShadow> _textShadows = [];
     private readonly Dictionary<TextBlock, SpriteVisual> _textShadowVisuals = [];
     private IReadOnlyList<SubtitleCue> _cues = [];
     private IReadOnlyList<string> _articlePages = [];
     private IReadOnlyList<ArticlePageTiming> _articleTimings = [];
+    private int _visibleArticlePageIndex = -1;
+    private (double Width, double Height, double Scale, double FontSize, double LyricWidth, double LineSpacing, string Font)? _articlePanelLayoutKey;
     private MediaEntry? _backgroundAsset;
     private MediaEntry? _audioAsset;
     private MediaEntry? _subtitleAsset;
@@ -79,10 +87,14 @@ public sealed partial class MainWindow : Window
     private string _automaticSongTitle = string.Empty;
     private Vector3 _scenePalettePrimary = new(0.48f, 0.72f, 1.0f);
     private Vector3 _scenePaletteSecondary = new(0.82f, 0.52f, 0.94f);
+    private byte _articlePanelAlpha = 170;
+    private Windows.UI.Color _articleBorderColor = Windows.UI.Color.FromArgb(36, 182, 156, 255);
 
     public MainWindow()
     {
         InitializeComponent();
+        ArticlePanel.Background = _articlePanelBrush;
+        ArticlePanel.BorderBrush = _articleBorderBrush;
         LyricsOverlay.Loaded += (_, _) =>
         {
             InitializeTextShadows();
@@ -137,6 +149,7 @@ public sealed partial class MainWindow : Window
         UpdateArticleSettings();
         RebuildArticlePages();
         ApplyLyricsStyle();
+        UpdateLyrics(CurrentTimelinePosition());
         TemplateBox_SelectionChanged(TemplateBox, null!);
         UpdateGenerateAvailability();
     }
@@ -385,6 +398,7 @@ public sealed partial class MainWindow : Window
         var pixels = new byte[checked((int)buffer.Length)];
         using (var reader = DataReader.FromBuffer(buffer)) reader.ReadBytes(pixels);
         var palette = ScenePaletteAnalyzer.AnalyzeBgra(pixels, bitmap.PixelWidth, bitmap.PixelHeight);
+        var contrast = AnalyzeBackgroundContrast(pixels, bitmap.PixelWidth, bitmap.PixelHeight);
         if (!_subjectMaskCache.TryGetValue(entry.File.Path, out var subjectMask))
         {
             var faces = await DetectFaceBoundsAsync(bitmap);
@@ -392,7 +406,7 @@ public sealed partial class MainWindow : Window
                 pixels, (int)bitmap.PixelWidth, (int)bitmap.PixelHeight, faces));
             CacheSubjectMask(entry.File.Path, subjectMask);
         }
-        return new BackgroundFrameData(pixels, subjectMask, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, palette.Primary, palette.Secondary);
+        return new BackgroundFrameData(pixels, subjectMask, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, palette.Primary, palette.Secondary, contrast);
     }
 
     private async Task<IReadOnlyList<(float X, float Y, float Width, float Height)>> DetectFaceBoundsAsync(SoftwareBitmap source)
@@ -428,6 +442,7 @@ public sealed partial class MainWindow : Window
     private void CacheBackgroundPixels(string path, BackgroundFrameData data)
     {
         _backgroundPaletteCache[path] = (data.Primary, data.Secondary);
+        _backgroundContrastCache[path] = data.Contrast;
         CacheSubjectMask(path, data.SubjectMask);
         if (!_backgroundImageCache.ContainsKey(path)) _backgroundImageCacheOrder.Enqueue(path);
         _backgroundImageCache[path] = data;
@@ -519,6 +534,12 @@ public sealed partial class MainWindow : Window
         var secondaryPalette = Vector3.Lerp(paletteA.Secondary, paletteB.Secondary, paletteMix);
         NvidiaGpuBridge.SetScenePalette(primaryPalette.X, primaryPalette.Y, primaryPalette.Z,
             secondaryPalette.X, secondaryPalette.Y, secondaryPalette.Z);
+        var contrastA = _backgroundContrastCache.GetValueOrDefault(current.File.Path, new BackgroundContrastSample(0.42f, 0.22f, 0.08f));
+        var contrastB = next is null ? contrastA : _backgroundContrastCache.GetValueOrDefault(next.File.Path, contrastA);
+        ApplyArticlePanelAppearance(
+            Lerp(contrastA.Average, contrastB.Average, paletteMix),
+            Lerp(contrastA.Complexity, contrastB.Complexity, paletteMix),
+            Lerp(contrastA.BrightFraction, contrastB.BrightFraction, paletteMix), secondaryPalette);
         var segmentDuration = Math.Max(state.SegmentDuration, 0.001);
         NvidiaGpuBridge.SetBackgroundMotionTimeline(
             (float)Math.Clamp(state.CurrentLocalTime / segmentDuration, 0, 1),
@@ -576,6 +597,7 @@ public sealed partial class MainWindow : Window
             using (var reader = DataReader.FromBuffer(buffer)) reader.ReadBytes(pixels);
             var palette = ScenePaletteAnalyzer.AnalyzeBgra(pixels, bitmap.PixelWidth, bitmap.PixelHeight);
             _backgroundPaletteCache[entry.File.Path] = palette;
+            _backgroundContrastCache[entry.File.Path] = AnalyzeBackgroundContrast(pixels, bitmap.PixelWidth, bitmap.PixelHeight);
             return palette;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
@@ -615,14 +637,17 @@ public sealed partial class MainWindow : Window
             value.X.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture),
             value.Y.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture),
             value.Z.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
+        static string Metric(float value) => value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
 
         var lines = new List<string>(_backgroundAssets.Count);
         foreach (var asset in _backgroundAssets)
         {
             var palette = _backgroundPaletteCache.GetValueOrDefault(asset.File.Path,
                 (Primary: _scenePalettePrimary, Secondary: _scenePaletteSecondary));
+            var contrast = _backgroundContrastCache.GetValueOrDefault(asset.File.Path,
+                new BackgroundContrastSample(0.42f, 0.22f, 0.08f));
             var maskPath = maskPaths.GetValueOrDefault(asset.File.Path, string.Empty);
-            lines.Add($"{(asset.Kind == MediaKind.Video ? 'V' : 'I')}|{asset.File.Path}|{Color(palette.Primary)}|{Color(palette.Secondary)}|{maskPath}");
+            lines.Add($"{(asset.Kind == MediaKind.Video ? 'V' : 'I')}|{asset.File.Path}|{Color(palette.Primary)}|{Color(palette.Secondary)}|{maskPath}|{Metric(contrast.Average)}|{Metric(contrast.Complexity)}|{Metric(contrast.BrightFraction)}");
         }
         return string.Join("\n", lines);
     }
@@ -869,6 +894,7 @@ public sealed partial class MainWindow : Window
         if (UpdateIntroOverlay(position))
         {
             LyricsOverlay.Visibility = Visibility.Collapsed;
+            ArticlePanel.Visibility = Visibility.Collapsed;
             return;
         }
 
@@ -877,21 +903,44 @@ public sealed partial class MainWindow : Window
             var seconds = position.TotalSeconds;
             var pageIndex = FindArticlePageIndex(seconds);
             pageIndex = Math.Clamp(pageIndex, 0, Math.Max(0, _articlePages.Count - 1));
-            CurrentLyricText.Text = _articlePages.Count == 0 ? string.Empty : _articlePages[pageIndex];
-            CurrentLyricText.FontSize = ArticleFontSizeSlider.Value;
-            CurrentLyricText.Opacity = 1;
-            CurrentLyricText.Foreground = _lyricWhiteBrush;
-            _lyricTranslate.Y = 0;
-            CurrentLyricText.RenderTransform = _lyricTranslate;
-            LyricsOverlay.Spacing = Math.Max(8, ArticleLineSpacingSlider.Value * 8);
-            PreviousLyricText.Text = string.Empty;
-            Previous2LyricText.Text = string.Empty;
-            NextLyricText.Text = string.Empty;
-            Next2LyricText.Text = pageIndex + 1 < _articlePages.Count ? "下一页 · " + _articlePages[pageIndex + 1][..Math.Min(36, _articlePages[pageIndex + 1].Length)] : string.Empty;
-            LyricsOverlay.Visibility = _articlePages.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            ApplyArticlePanelLayout();
+            if (_visibleArticlePageIndex != pageIndex)
+            {
+                ArticleCurrentPageText.Text = _articlePages.Count == 0 ? string.Empty : _articlePages[pageIndex];
+                ArticleNextPageText.Text = pageIndex + 1 < _articlePages.Count ? _articlePages[pageIndex + 1] : string.Empty;
+                _visibleArticlePageIndex = pageIndex;
+            }
+            ArticleCurrentPageText.Opacity = 1;
+            var transition = 0.0;
+            if (pageIndex < _articleTimings.Count)
+            {
+                var timing = _articleTimings[pageIndex];
+                transition = Math.Clamp((seconds - timing.TransitionStartSeconds) / Math.Max(0.001, timing.TransitionSeconds), 0, 1);
+            }
+            var contentHeight = Math.Max(1, ArticlePageViewport.ActualHeight > 0
+                ? ArticlePageViewport.ActualHeight
+                : ArticlePanel.Height - ArticlePanel.Padding.Top - ArticlePanel.Padding.Bottom);
+            _articleCurrentTranslate.Y = -contentHeight * 0.13 * transition;
+            ArticleCurrentPageText.RenderTransform = _articleCurrentTranslate;
+            ArticleCurrentPageText.Opacity = 1 - transition * 0.34;
+            if (pageIndex + 1 < _articlePages.Count)
+            {
+                _articleNextTranslate.Y = contentHeight * 0.15 * (1 - transition);
+                ArticleNextPageText.RenderTransform = _articleNextTranslate;
+                ArticleNextPageText.Opacity = transition;
+                ArticleNextPageText.Visibility = transition > 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+            else
+            {
+                ArticleNextPageText.Text = string.Empty;
+                ArticleNextPageText.Visibility = Visibility.Collapsed;
+            }
+            LyricsOverlay.Visibility = Visibility.Collapsed;
+            ArticlePanel.Visibility = _articlePages.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
             return;
         }
 
+        ArticlePanel.Visibility = Visibility.Collapsed;
         var current = SubtitleParser.CurrentIndexAt(_cues, position);
         var showFive = LyricWindowBox.SelectedIndex == 1;
         Previous2LyricText.Visibility = showFive ? Visibility.Visible : Visibility.Collapsed;
@@ -955,6 +1004,7 @@ public sealed partial class MainWindow : Window
         UpdateIntroText();
         UpdateArticleSettings();
         ApplyLyricsStyle();
+        UpdateLyrics(CurrentTimelinePosition());
     }
 
     private void ArticleSettings_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -1039,7 +1089,7 @@ public sealed partial class MainWindow : Window
     {
         if (LyricsOverlay is null || LyricFontSizeSlider is null || PreviewFrame is null ||
             LyricWidthSlider is null || LyricLineSpacingSlider is null || LyricInactiveOpacitySlider is null || LyricAlignmentBox is null || LyricGlowSlider is null) return;
-        var size = LyricFontSizeSlider.Value;
+        var size = LyricFontSizeSlider.Value * PreviewOutputScale;
         CurrentLyricText.FontSize = size;
         PreviousLyricText.FontSize = size * 0.68;
         NextLyricText.FontSize = size * 0.68;
@@ -1051,8 +1101,7 @@ public sealed partial class MainWindow : Window
         NextLyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value, 0.66);
         Previous2LyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value * 0.88, 0.42);
         Next2LyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value * 0.88, 0.42);
-        var outputScale = PreviewFrame.Width > PreviewFrame.Height ? 3.0 :
-            Math.Abs(PreviewFrame.Width - PreviewFrame.Height) < 1 ? 1080.0 / 580.0 : 3.0;
+        var outputScale = PreviewOutputScale;
         var lyricGlow = (float)LyricGlowSlider.Value;
         foreach (var text in LyricTextElements())
         {
@@ -1076,6 +1125,120 @@ public sealed partial class MainWindow : Window
             Y = (LyricPositionSlider.Value - 0.5) * PreviewFrame.Height
         };
     }
+
+    private void ApplyArticlePanelLayout()
+    {
+        if (PreviewFrame is null || LyricWidthSlider is null || ArticleFontSizeSlider is null || ArticleLineSpacingSlider is null) return;
+        var frameWidth = PreviewFrame.Width;
+        var frameHeight = PreviewFrame.Height;
+        var scale = PreviewOutputScale;
+        var fontSize = ArticleFontSizeSlider.Value * scale;
+        var layoutKey = (frameWidth, frameHeight, scale, fontSize, LyricWidthSlider.Value,
+            ArticleLineSpacingSlider.Value, _selectedFontFamily);
+        if (_articlePanelLayoutKey == layoutKey) return;
+        _articlePanelLayoutKey = layoutKey;
+        var width = Math.Min(frameWidth * 0.90, frameWidth * LyricWidthSlider.Value);
+        var height = frameHeight * 0.62;
+        var padding = Math.Max(fontSize * 0.78, 24 * scale);
+        ArticlePanel.Width = width;
+        ArticlePanel.Height = height;
+        ArticlePanel.Margin = new Thickness(0, frameHeight * 0.20, 0, 0);
+        ArticlePanel.Padding = new Thickness(padding);
+        ArticlePanel.CornerRadius = new CornerRadius(padding * 0.62);
+        ArticlePanel.BorderThickness = new Thickness(scale);
+        ArticleCurrentPageText.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily(_selectedFontFamily);
+        ArticleNextPageText.FontFamily = ArticleCurrentPageText.FontFamily;
+        ArticleCurrentPageText.FontSize = fontSize;
+        ArticleNextPageText.FontSize = fontSize;
+        ArticleCurrentPageText.LineHeight = fontSize * ArticleLineSpacingSlider.Value;
+        ArticleNextPageText.LineHeight = ArticleCurrentPageText.LineHeight;
+        ArticleCurrentPageText.MaxHeight = Math.Max(1, height - padding * 2);
+        ArticleNextPageText.MaxHeight = ArticleCurrentPageText.MaxHeight;
+        var contentWidth = Math.Max(1, width - padding * 2);
+        var contentHeight = Math.Max(1, height - padding * 2);
+        ArticlePageViewport.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry
+        {
+            Rect = new Windows.Foundation.Rect(0, 0, contentWidth, contentHeight)
+        };
+    }
+
+    private static BackgroundContrastSample AnalyzeBackgroundContrast(byte[] pixels, int width, int height)
+    {
+        if (width <= 0 || height <= 0 || pixels.Length < (long)width * height * 4)
+            return new BackgroundContrastSample(0.42f, 0.22f, 0.08f);
+
+        const int columns = 32;
+        const int rows = 24;
+        var luminance = new float[columns * rows];
+        var sum = 0f;
+        var bright = 0;
+        for (var row = 0; row < rows; row++)
+        for (var column = 0; column < columns; column++)
+        {
+            var x = Math.Clamp((int)((column + 0.5f) / columns * width), 0, width - 1);
+            var y = Math.Clamp((int)((row + 0.5f) / rows * height), 0, height - 1);
+            var offset = (y * width + x) * 4;
+            var value = 0.2126f * pixels[offset + 2] / 255f +
+                        0.7152f * pixels[offset + 1] / 255f +
+                        0.0722f * pixels[offset] / 255f;
+            luminance[row * columns + column] = value;
+            sum += value;
+            if (value > 0.76f) bright++;
+        }
+
+        var differences = 0f;
+        var comparisons = 0;
+        for (var row = 0; row < rows; row++)
+        for (var column = 0; column < columns; column++)
+        {
+            var value = luminance[row * columns + column];
+            if (column + 1 < columns)
+            {
+                differences += Math.Abs(value - luminance[row * columns + column + 1]);
+                comparisons++;
+            }
+            if (row + 1 < rows)
+            {
+                differences += Math.Abs(value - luminance[(row + 1) * columns + column]);
+                comparisons++;
+            }
+        }
+
+        return new BackgroundContrastSample(sum / luminance.Length,
+            comparisons == 0 ? 0 : differences / comparisons, (float)bright / luminance.Length);
+    }
+
+    private void ApplyArticlePanelAppearance(float average, float complexity, float brightFraction, Vector3 secondary)
+    {
+        var brightness = SmoothStep(0.26f, 0.76f, average);
+        var adjustedComplexity = Math.Min(1, complexity * Math.Max(0.5f, 1 - (float)BlurSlider.Value * 0.5f));
+        var risk = Math.Min(1, brightness * 0.70f + adjustedComplexity * 0.22f + brightFraction * 0.22f);
+        var scrimAlpha = Math.Clamp((0.025f + risk * 0.30f) * 1.52f + 0.18f, 0.38f, 0.78f);
+        var alpha = (byte)Math.Clamp((int)MathF.Round(scrimAlpha * 255), 0, 255);
+        if (alpha != _articlePanelAlpha)
+        {
+            _articlePanelAlpha = alpha;
+            _articlePanelBrush.Color = Windows.UI.Color.FromArgb(alpha, 2, 2, 2);
+        }
+
+        var border = Windows.UI.Color.FromArgb(36,
+            (byte)Math.Clamp((int)MathF.Round((0.44f + secondary.X * 0.56f) * 255), 0, 255),
+            (byte)Math.Clamp((int)MathF.Round((0.44f + secondary.Y * 0.56f) * 255), 0, 255),
+            (byte)Math.Clamp((int)MathF.Round((0.44f + secondary.Z * 0.56f) * 255), 0, 255));
+        if (border != _articleBorderColor)
+        {
+            _articleBorderColor = border;
+            _articleBorderBrush.Color = border;
+        }
+    }
+
+    private static float SmoothStep(float edge0, float edge1, float value)
+    {
+        var t = Math.Clamp((value - edge0) / Math.Max(0.0001f, edge1 - edge0), 0, 1);
+        return t * t * (3 - 2 * t);
+    }
+
+    private static float Lerp(float from, float to, float amount) => from + (to - from) * amount;
 
     private void TemplateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -1224,6 +1387,8 @@ public sealed partial class MainWindow : Window
         IntroTitleText.FontFamily = font;
         IntroAuthorText.FontFamily = font;
         IntroDateText.FontFamily = font;
+        ArticleCurrentPageText.FontFamily = font;
+        ArticleNextPageText.FontFamily = font;
     }
 
     private void InitializeTextShadows()
@@ -1231,14 +1396,18 @@ public sealed partial class MainWindow : Window
         if (_textShadows.Count > 0) return;
         var compositor = ElementCompositionPreview.GetElementVisual(CurrentLyricText).Compositor;
         var lyricTexts = LyricTextElements();
-        foreach (var text in lyricTexts.Concat([IntroTitleText, IntroAuthorText, IntroDateText]))
+        var articleTexts = new[] { ArticleCurrentPageText, ArticleNextPageText };
+        foreach (var text in lyricTexts.Concat([IntroTitleText, IntroAuthorText, IntroDateText]).Concat(articleTexts))
         {
             var shadow = compositor.CreateDropShadow();
             shadow.Mask = text.GetAlphaMask();
-            shadow.Color = Windows.UI.Color.FromArgb(255, 255, 255, 255);
-            shadow.Offset = Vector3.Zero;
-            shadow.Opacity = lyricTexts.Contains(text) ? 0 : 0.20f;
-            shadow.BlurRadius = lyricTexts.Contains(text) ? 0 : 0.5f;
+            var isArticleText = articleTexts.Contains(text);
+            shadow.Color = isArticleText
+                ? Windows.UI.Color.FromArgb(255, 0, 0, 0)
+                : Windows.UI.Color.FromArgb(255, 255, 255, 255);
+            shadow.Offset = isArticleText ? new Vector3(0, -2 * (float)PreviewOutputScale, 0) : Vector3.Zero;
+            shadow.Opacity = isArticleText ? 0.82f : lyricTexts.Contains(text) ? 0 : 0.20f;
+            shadow.BlurRadius = isArticleText ? Math.Max(1, 4 * (float)PreviewOutputScale) : lyricTexts.Contains(text) ? 0 : 0.5f;
             var hostVisual = ElementCompositionPreview.GetElementVisual(text);
             var shadowVisual = compositor.CreateSpriteVisual();
             shadowVisual.Shadow = shadow;
@@ -1273,8 +1442,20 @@ public sealed partial class MainWindow : Window
     {
         if (ArticleTextBox is null || ArticleRateSlider is null) return;
         var english = LanguageBox.SelectedIndex == 1;
-        var targetUnits = Math.Clamp((int)(PreviewFrame.Width / Math.Max(16, ArticleFontSizeSlider.Value) * 3.2), 40, 180);
+        var fontSize = Math.Max(1, ArticleFontSizeSlider.Value * PreviewOutputScale);
+        var boxWidth = Math.Min(PreviewFrame.Width * 0.90, PreviewFrame.Width * LyricWidthSlider.Value);
+        var boxHeight = PreviewFrame.Height * 0.62;
+        var padding = Math.Max(fontSize * 0.78, 24 * PreviewOutputScale);
+        var contentWidth = Math.Max(1, boxWidth - padding * 2);
+        var contentHeight = Math.Max(1, boxHeight - padding * 2);
+        var lineHeight = Math.Max(fontSize, fontSize * ArticleLineSpacingSlider.Value);
+        var linesPerPage = Math.Max(1, (int)(contentHeight / lineHeight));
+        var unitsPerLine = english
+            ? contentWidth / (fontSize * 3.0)
+            : contentWidth / fontSize;
+        var targetUnits = Math.Clamp((int)(unitsPerLine * linesPerPage), 40, 3000);
         _articlePages = ArticlePaginator.Paginate(ArticleTextBox.Text, english, targetUnits);
+        _visibleArticlePageIndex = -1;
         var counts = _articlePages.Select(page => ArticleReadingTiming.CountReadingUnits(page, english)).ToArray();
         var readingTime = Math.Max(1, _articleDurationSeconds - ArticleEndHoldSlider.Value);
         _articleTimings = ArticleReadingTiming.AllocatePageTimings(counts, readingTime);
@@ -1350,7 +1531,7 @@ public sealed partial class MainWindow : Window
 
         if (animation == 0)
         {
-            _lyricTranslate.Y = (1 - eased) * 16;
+            _lyricTranslate.Y = (1 - eased) * 16 * PreviewOutputScale;
             CurrentLyricText.RenderTransform = _lyricTranslate;
         }
         else if (animation is 2 or 4)
@@ -1372,6 +1553,15 @@ public sealed partial class MainWindow : Window
     {
         var progress = Math.Clamp(value, 0, 1);
         return progress * progress * (3 - 2 * progress);
+    }
+
+    private double PreviewOutputScale
+    {
+        get
+        {
+            var outputWidth = AspectRatioBox.SelectedIndex == 1 ? 1920.0 : 1080.0;
+            return PreviewFrame.Width / outputWidth;
+        }
     }
 
     private void RenderVisualizer(double visualTime, double audioPosition, bool playing)
@@ -1749,7 +1939,7 @@ public sealed partial class MainWindow : Window
                 var timing = _articleTimings[index];
                 builder.Append(timing.StartSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)).Append('\t')
                     .Append(timing.EndSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)).Append('\t')
-                    .Append(OneLine(_articlePages[index])).Append('\n');
+                    .Append(ArticleTimelineText(_articlePages[index])).Append('\n');
             }
         }
         else
@@ -1769,6 +1959,10 @@ public sealed partial class MainWindow : Window
     private static string OneLine(string value) => string.Join(' ',
         value.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ')
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private static string ArticleTimelineText(string value) => string.Join('\u2028',
+        value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n')
+            .Split('\n').Select(line => line.Replace('\t', ' ').TrimEnd()));
 
     private void InitializeNvidiaStatus()
     {

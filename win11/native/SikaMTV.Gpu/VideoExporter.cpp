@@ -149,6 +149,8 @@ namespace
                     cue.start = std::stod(line.substr(0, first));
                     cue.end = std::stod(line.substr(first + 1, second - first - 1));
                     cue.text = line.substr(second + 1);
+                    for (size_t separator = cue.text.find(L'\u2028'); separator != std::wstring::npos; separator = cue.text.find(L'\u2028', separator + 2))
+                        cue.text.replace(separator, 1, L"\r\n");
                     if (!cue.text.empty() && cue.end >= cue.start) result.push_back(std::move(cue));
                 }
                 catch (...) { }
@@ -193,6 +195,9 @@ namespace
         float primary[3] = { 0.48f, 0.72f, 1.0f };
         float secondary[3] = { 0.82f, 0.52f, 0.94f };
         std::wstring subjectMaskPath;
+        float contrastAverage = 0.42f;
+        float contrastComplexity = 0.22f;
+        float contrastBrightFraction = 0.08f;
     };
 
     std::vector<BackgroundMediaDescriptor> ParseBackgroundManifest(const std::wstring& manifest)
@@ -206,6 +211,9 @@ namespace
             const auto second = first == std::wstring::npos ? first : line.find(L'|', first + 1);
             const auto third = second == std::wstring::npos ? second : line.find(L'|', second + 1);
             const auto fourth = third == std::wstring::npos ? third : line.find(L'|', third + 1);
+            const auto fifth = fourth == std::wstring::npos ? fourth : line.find(L'|', fourth + 1);
+            const auto sixth = fifth == std::wstring::npos ? fifth : line.find(L'|', fifth + 1);
+            const auto seventh = sixth == std::wstring::npos ? sixth : line.find(L'|', sixth + 1);
             if (first != 1 || second == std::wstring::npos) continue;
             BackgroundMediaDescriptor item;
             item.video = line[0] == L'V';
@@ -224,7 +232,19 @@ namespace
                 };
                 parseColor(line.substr(second + 1, third - second - 1), item.primary);
                 parseColor(line.substr(third + 1, fourth == std::wstring::npos ? std::wstring::npos : fourth - third - 1), item.secondary);
-                if (fourth != std::wstring::npos) item.subjectMaskPath = line.substr(fourth + 1);
+                if (fourth != std::wstring::npos)
+                    item.subjectMaskPath = line.substr(fourth + 1, fifth == std::wstring::npos ? std::wstring::npos : fifth - fourth - 1);
+                const auto parseMetric = [](const std::wstring& value, float fallback)
+                {
+                    try { return std::clamp(std::stof(value), 0.0f, 1.0f); }
+                    catch (...) { return fallback; }
+                };
+                if (fifth != std::wstring::npos)
+                    item.contrastAverage = parseMetric(line.substr(fifth + 1, sixth == std::wstring::npos ? std::wstring::npos : sixth - fifth - 1), item.contrastAverage);
+                if (sixth != std::wstring::npos)
+                    item.contrastComplexity = parseMetric(line.substr(sixth + 1, seventh == std::wstring::npos ? std::wstring::npos : seventh - sixth - 1), item.contrastComplexity);
+                if (seventh != std::wstring::npos)
+                    item.contrastBrightFraction = parseMetric(line.substr(seventh + 1), item.contrastBrightFraction);
             }
             if (!item.path.empty()) result.push_back(std::move(item));
         }
@@ -828,6 +848,7 @@ namespace
         UINT width = 0;
         UINT height = 0;
         std::map<std::tuple<std::wstring, int, int>, HFONT> fonts;
+        std::map<std::tuple<std::wstring, std::wstring, int, LONG, LONG>, std::vector<std::pair<std::wstring, LONG>>> articleLines;
 
         bool Initialize(UINT w, UINT h)
         {
@@ -880,6 +901,91 @@ namespace
             DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &textBounds, format | DT_NOPREFIX | DT_WORDBREAK);
             SelectObject(dc, oldFont);
             return bounds;
+        }
+
+        RECT DrawArticleMask(const std::wstring& text, const std::wstring& family, int fontSize,
+            RECT rectangle, float lineSpacing, LONG translationY = 0)
+        {
+            RECT bounds{
+                std::clamp<LONG>(rectangle.left, 0, static_cast<LONG>(width)),
+                std::clamp<LONG>(rectangle.top, 0, static_cast<LONG>(height)),
+                std::clamp<LONG>(rectangle.right, 0, static_cast<LONG>(width)),
+                std::clamp<LONG>(rectangle.bottom, 0, static_cast<LONG>(height))
+            };
+            if (bounds.right <= bounds.left || bounds.bottom <= bounds.top || text.empty()) return RECT{};
+            for (LONG y = bounds.top; y < bounds.bottom; ++y)
+                std::memset(pixels + static_cast<size_t>(y) * width + bounds.left, 0,
+                    static_cast<size_t>(bounds.right - bounds.left) * 4);
+
+            const auto font = GetFont(family, fontSize, FW_NORMAL);
+            if (!font) return RECT{};
+            const auto oldFont = SelectObject(dc, font);
+            const LONG rowHeight = std::max<LONG>(fontSize,
+                static_cast<LONG>(std::lround(fontSize * std::clamp(lineSpacing, 1.0f, 3.0f))));
+            const LONG maxLineWidth = bounds.right - bounds.left;
+            const auto key = std::make_tuple(text, family, fontSize, maxLineWidth, rowHeight);
+            auto [layout, inserted] = articleLines.try_emplace(key);
+            if (inserted)
+            {
+                size_t paragraphStart = 0;
+                while (paragraphStart <= text.size())
+                {
+                    auto paragraphEnd = text.find_first_of(L"\r\n", paragraphStart);
+                    if (paragraphEnd == std::wstring::npos) paragraphEnd = text.size();
+                    size_t lineStart = paragraphStart;
+                    if (lineStart == paragraphEnd) layout->second.emplace_back(L"", 0);
+                    while (lineStart < paragraphEnd)
+                    {
+                        size_t cursor = lineStart;
+                        size_t lastBreak = std::wstring::npos;
+                        size_t lineEnd = paragraphEnd;
+                        for (; cursor < paragraphEnd; ++cursor)
+                        {
+                            if (text[cursor] == L' ' || text[cursor] == L'\t') lastBreak = cursor;
+                            if (cursor > lineStart && text[cursor] >= 0xdc00 && text[cursor] <= 0xdfff) continue;
+                            SIZE extent{};
+                            const auto candidateLength = static_cast<int>(cursor - lineStart + 1);
+                            if (GetTextExtentPoint32W(dc, text.data() + lineStart, candidateLength, &extent) && extent.cx > maxLineWidth)
+                            {
+                                lineEnd = lastBreak != std::wstring::npos && lastBreak > lineStart ? lastBreak : cursor;
+                                if (lineEnd == lineStart) lineEnd = std::min(cursor + 1, paragraphEnd);
+                                break;
+                            }
+                        }
+                        while (lineEnd > lineStart && (text[lineEnd - 1] == L' ' || text[lineEnd - 1] == L'\t')) --lineEnd;
+                        if (lineEnd <= lineStart) lineEnd = std::min(lineStart + 1, paragraphEnd);
+                        const int length = static_cast<int>(lineEnd - lineStart);
+                        SIZE extent{};
+                        GetTextExtentPoint32W(dc, text.data() + lineStart, length, &extent);
+                        layout->second.emplace_back(text.substr(lineStart, length), extent.cx);
+                        lineStart = lineEnd;
+                        while (lineStart < paragraphEnd && (text[lineStart] == L' ' || text[lineStart] == L'\t')) ++lineStart;
+                    }
+                    if (paragraphEnd == text.size()) break;
+                    paragraphStart = paragraphEnd + 1;
+                    if (paragraphStart < text.size() && text[paragraphEnd] == L'\r' && text[paragraphStart] == L'\n') ++paragraphStart;
+                }
+            }
+
+            LONG y = bounds.top;
+            LONG usedRight = bounds.left;
+            const int savedDc = SaveDC(dc);
+            IntersectClipRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom);
+            y += translationY;
+            for (const auto& [line, lineWidth] : layout->second)
+            {
+                if (y + fontSize >= bounds.bottom) break;
+                if (!line.empty())
+                {
+                    RECT lineRect{ bounds.left, y, bounds.right, std::min<LONG>(bounds.bottom, y + fontSize + 3) };
+                    DrawTextW(dc, line.c_str(), static_cast<int>(line.size()), &lineRect, DT_SINGLELINE | DT_NOPREFIX | DT_LEFT | DT_TOP);
+                    usedRight = std::max(usedRight, std::min(bounds.right, bounds.left + lineWidth));
+                }
+                y += rowHeight;
+            }
+            if (savedDc != 0) RestoreDC(dc, savedDc);
+            SelectObject(dc, oldFont);
+            return RECT{ bounds.left, bounds.top, usedRight, std::min(bounds.bottom, std::max(bounds.top, y)) };
         }
 
         LONG MeasureTextHeight(const std::wstring& text, const std::wstring& family, int fontSize, int weight, LONG textWidth)
@@ -957,12 +1063,68 @@ namespace
         return static_cast<int>(std::distance(cues.begin(), found) - 1);
     }
 
+    struct FrameContrastSample
+    {
+        float average = 0.42f;
+        float complexity = 0.22f;
+        float brightFraction = 0.08f;
+    };
+
+    void CompositeArticlePanel(unsigned char* frame, UINT frameWidth, UINT frameHeight, RECT rectangle,
+        float radius, float fillOpacity, const float secondary[3])
+    {
+        if (!frame || rectangle.right <= rectangle.left || rectangle.bottom <= rectangle.top) return;
+        const LONG left = std::clamp<LONG>(rectangle.left, 0, static_cast<LONG>(frameWidth));
+        const LONG right = std::clamp<LONG>(rectangle.right, 0, static_cast<LONG>(frameWidth));
+        const LONG top = std::clamp<LONG>(rectangle.top, 0, static_cast<LONG>(frameHeight));
+        const LONG bottom = std::clamp<LONG>(rectangle.bottom, 0, static_cast<LONG>(frameHeight));
+        radius = std::clamp(radius, 1.0f, std::min((right - left) * 0.5f, (bottom - top) * 0.5f));
+        fillOpacity = std::clamp(fillOpacity, 0.0f, 1.0f);
+        const unsigned char borderRed = static_cast<unsigned char>(std::clamp(std::lround((0.44f + secondary[0] * 0.56f) * 255), 0l, 255l));
+        const unsigned char borderGreen = static_cast<unsigned char>(std::clamp(std::lround((0.44f + secondary[1] * 0.56f) * 255), 0l, 255l));
+        const unsigned char borderBlue = static_cast<unsigned char>(std::clamp(std::lround((0.44f + secondary[2] * 0.56f) * 255), 0l, 255l));
+        const auto blend = [frame, frameWidth](LONG x, LONG y, float opacity, unsigned char red, unsigned char green, unsigned char blue)
+        {
+            const auto alpha = static_cast<unsigned>(std::clamp(std::lround(opacity * 255.0f), 0l, 255l));
+            if (alpha == 0) return;
+            auto* pixel = frame + (static_cast<size_t>(y) * frameWidth + static_cast<size_t>(x)) * 4;
+            const auto inverse = 255 - alpha;
+            pixel[0] = static_cast<unsigned char>((pixel[0] * inverse + blue * alpha + 127) / 255);
+            pixel[1] = static_cast<unsigned char>((pixel[1] * inverse + green * alpha + 127) / 255);
+            pixel[2] = static_cast<unsigned char>((pixel[2] * inverse + red * alpha + 127) / 255);
+        };
+
+        for (LONG y = top; y < bottom; ++y)
+        for (LONG x = left; x < right; ++x)
+        {
+            const float px = x + 0.5f;
+            const float py = y + 0.5f;
+            float distanceToCorner = radius;
+            bool inCorner = false;
+            float cx = 0;
+            float cy = 0;
+            if (px < left + radius && py < top + radius) { cx = left + radius; cy = top + radius; inCorner = true; }
+            else if (px >= right - radius && py < top + radius) { cx = right - radius; cy = top + radius; inCorner = true; }
+            else if (px < left + radius && py >= bottom - radius) { cx = left + radius; cy = bottom - radius; inCorner = true; }
+            else if (px >= right - radius && py >= bottom - radius) { cx = right - radius; cy = bottom - radius; inCorner = true; }
+            if (inCorner) distanceToCorner = std::hypot(px - cx, py - cy);
+            const float coverage = inCorner ? std::clamp(radius + 0.5f - distanceToCorner, 0.0f, 1.0f) : 1.0f;
+            if (coverage <= 0) continue;
+            blend(x, y, fillOpacity * coverage, 2, 2, 2);
+            const float edgeDistance = inCorner
+                ? std::abs(distanceToCorner - radius)
+                : std::min({ px - left, right - px, py - top, bottom - py });
+            if (edgeDistance < 1.2f)
+                blend(x, y, 0.14f * std::clamp(1.2f - edgeDistance, 0.0f, 1.0f), borderRed, borderGreen, borderBlue);
+        }
+    }
+
     void CompositeText(const ExportRequest& request, const std::vector<SubtitleLine>& cues, double seconds,
+        const BackgroundMediaDescriptor& paletteA, const BackgroundMediaDescriptor& paletteB, float paletteMix,
         TextSurface& surface, unsigned char* frame)
     {
         const bool landscape = request.width > request.height;
         const bool square = !landscape && request.width == request.height;
-        const float scale = landscape ? request.width / 640.0f : square ? request.width / 580.0f : request.height / 640.0f;
         const auto lyricWidth = static_cast<LONG>(request.width * std::clamp(request.lyricWidth, 0.45f, 0.96f));
         const auto lyricMarginX = static_cast<LONG>((request.width - lyricWidth) / 2);
         const LONG textWidth = lyricWidth;
@@ -1041,12 +1203,53 @@ namespace
             if (cueIndex >= 0)
             {
                 const auto& cue = cues[static_cast<size_t>(cueIndex)];
-                const auto fontSize = std::max(1, static_cast<int>(std::lround(request.articleFontSize * scale)));
-                RECT rectangle{ lyricMarginX, static_cast<LONG>(request.height * 0.18),
-                    lyricMarginX + lyricWidth, static_cast<LONG>(request.height * 0.82) };
-                const auto area = surface.DrawMask(cue.text, request.fontFamily, fontSize, FW_NORMAL, rectangle, DT_CENTER | DT_VCENTER);
-                const auto fade = Ease(static_cast<float>((seconds - cue.start) / 0.35));
-                surface.Composite(frame, area, 0.94f * std::max(0.15f, fade), RGB(250, 248, 244), true);
+                const auto fontSize = std::max(1, static_cast<int>(std::lround(request.articleFontSize)));
+                const LONG panelWidth = std::min<LONG>(static_cast<LONG>(request.width * 0.90f), lyricWidth);
+                const LONG panelHeight = static_cast<LONG>(request.height * 0.62f);
+                const LONG panelLeft = (static_cast<LONG>(request.width) - panelWidth) / 2;
+                const LONG panelTop = static_cast<LONG>(request.height * 0.20f);
+                const float padding = std::max(fontSize * 0.78f, 24.0f);
+                const float cornerRadius = padding * 0.62f;
+                const RECT panel{ panelLeft, panelTop, panelLeft + panelWidth, panelTop + panelHeight };
+                const RECT content{ panelLeft + static_cast<LONG>(padding), panelTop + static_cast<LONG>(padding),
+                    panelLeft + panelWidth - static_cast<LONG>(padding), panelTop + panelHeight - static_cast<LONG>(padding) };
+                const float paletteMixSafe = std::clamp(paletteMix, 0.0f, 1.0f);
+                const FrameContrastSample contrast{
+                    std::lerp(paletteA.contrastAverage, paletteB.contrastAverage, paletteMixSafe),
+                    std::lerp(paletteA.contrastComplexity, paletteB.contrastComplexity, paletteMixSafe),
+                    std::lerp(paletteA.contrastBrightFraction, paletteB.contrastBrightFraction, paletteMixSafe)
+                };
+                const auto smooth = [](float edge0, float edge1, float value)
+                {
+                    const float t = std::clamp((value - edge0) / std::max(0.0001f, edge1 - edge0), 0.0f, 1.0f);
+                    return t * t * (3.0f - 2.0f * t);
+                };
+                const float brightness = smooth(0.26f, 0.76f, contrast.average);
+                const float complexity = std::min(1.0f, contrast.complexity * std::max(0.5f, 1.0f - request.blur * 0.5f));
+                const float risk = std::min(1.0f, brightness * 0.70f + complexity * 0.22f + contrast.brightFraction * 0.22f);
+                const float scrimAlpha = std::clamp((0.025f + risk * 0.30f) * 1.52f + 0.18f, 0.38f, 0.78f);
+                float secondary[3]{};
+                for (size_t channel = 0; channel < 3; ++channel)
+                    secondary[channel] = std::lerp(paletteA.secondary[channel], paletteB.secondary[channel], paletteMixSafe);
+                CompositeArticlePanel(frame, request.width, request.height, panel, cornerRadius, scrimAlpha, secondary);
+
+                const float transitionSeconds = std::clamp(static_cast<float>(cue.end - cue.start) * 0.14f, 0.35f, 1.1f);
+                const float transitionStart = std::max(static_cast<float>(cue.start), static_cast<float>(cue.end) - transitionSeconds);
+                const float transition = std::clamp((static_cast<float>(seconds) - transitionStart) / transitionSeconds, 0.0f, 1.0f);
+                const LONG contentHeight = std::max<LONG>(1, content.bottom - content.top);
+                const LONG currentOffset = -static_cast<LONG>(std::lround(contentHeight * 0.13f * transition));
+                auto area = surface.DrawArticleMask(cue.text, request.fontFamily, fontSize, content, request.articleLineSpacing, currentOffset);
+                surface.Composite(frame, area, 0.82f * (1.0f - transition * 0.18f), RGB(0, 0, 0), 0.8f);
+                surface.Composite(frame, area, 1.0f - transition * 0.34f, RGB(250, 248, 244), 0);
+
+                if (static_cast<size_t>(cueIndex + 1) < cues.size() && transition > 0)
+                {
+                    area = surface.DrawArticleMask(cues[static_cast<size_t>(cueIndex + 1)].text,
+                        request.fontFamily, fontSize, content, request.articleLineSpacing,
+                        static_cast<LONG>(std::lround(contentHeight * 0.15f * (1.0f - transition))));
+                    surface.Composite(frame, area, 0.82f * transition, RGB(0, 0, 0), 0.8f);
+                    surface.Composite(frame, area, transition, RGB(250, 248, 244), 0);
+                }
             }
             return;
         }
@@ -1068,7 +1271,7 @@ namespace
             };
             std::vector<LyricRow> rows;
             float blockHeight = 0;
-            float rowGap = request.lyricFontSize * scale * std::clamp(request.lyricLineSpacing - 1.0f, 0.10f, 1.50f) * 0.16f;
+            float rowGap = request.lyricFontSize * std::clamp(request.lyricLineSpacing - 1.0f, 0.10f, 1.50f) * 0.16f;
             for (int offset = firstOffset; offset <= lastOffset; ++offset)
             {
                 const auto index = cueIndex + offset;
@@ -1077,7 +1280,7 @@ namespace
                 float animationScale = 1;
                 if (offset == 0 && request.lyricAnimation == 2) animationScale = 0.93f + transition * 0.07f;
                 if (offset == 0 && request.lyricAnimation == 4) animationScale = 0.84f + transition * 0.16f;
-                const auto fontSize = std::max(1, static_cast<int>(std::lround(request.lyricFontSize * scale * relative * animationScale)));
+                const auto fontSize = std::max(1, static_cast<int>(std::lround(request.lyricFontSize * relative * animationScale)));
                 const auto rowHeight = surface.MeasureTextHeight(cues[static_cast<size_t>(index)].text,
                     request.fontFamily, fontSize, offset == 0 ? FW_SEMIBOLD : FW_NORMAL, textWidth);
                 rows.push_back({ index, fontSize, rowHeight, offset });
@@ -1104,7 +1307,7 @@ namespace
                 float offsetY = 0;
                 const float inactive = std::clamp(request.lyricInactiveOpacity, 0.08f, 0.72f);
                 float opacity = offset == 0 ? (request.lyricAnimation == 5 ? 1.0f : 0.22f + transition * 0.78f) : (std::abs(offset) == 1 ? std::max(inactive, 0.66f) : std::max(inactive * 0.88f, 0.42f));
-                if (offset == 0 && request.lyricAnimation == 0) offsetY = (1.0f - transition) * 16.0f * scale;
+                if (offset == 0 && request.lyricAnimation == 0) offsetY = (1.0f - transition) * 16.0f;
                 if (offset == 0 && request.lyricAnimation == 1) opacity = transition;
                 if (offset == 0 && request.lyricAnimation == 3) opacity = transition;
                 const UINT alignment = request.lyricAlignment == 0 ? DT_LEFT : request.lyricAlignment == 2 ? DT_RIGHT : DT_CENTER;
@@ -1479,7 +1682,12 @@ namespace
                     request.intensity, request.blur, request.vignette, request.saturation, request.slowZoom,
                     request.visualizerScale, request.rainbow, smoothedBands.data(), AudioBandCount, pixels.data(), static_cast<int>(pixels.size()));
                 if (FAILED(static_cast<HRESULT>(result))) break;
-                CompositeText(request, cues, time, textSurface, pixels.data());
+                const auto& contrastPaletteA = backgrounds[backgroundState.currentIndex];
+                const auto& contrastPaletteB = backgroundState.nextIndex
+                    ? backgrounds[*backgroundState.nextIndex]
+                    : contrastPaletteA;
+                CompositeText(request, cues, time, contrastPaletteA, contrastPaletteB,
+                    backgroundState.nextIndex ? backgroundState.transitionProgress : 0.0f, textSurface, pixels.data());
 
                 ComPtr<IMFMediaBuffer> videoBuffer;
                 result = MFCreateMemoryBuffer(frameBytes, videoBuffer.GetAddressOf());

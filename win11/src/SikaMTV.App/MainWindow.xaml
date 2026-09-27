@@ -141,6 +141,16 @@
                         <TextBlock x:Name="NextLyricText" FontSize="15" Opacity="0.56" TextAlignment="Center" TextWrapping="Wrap" />
                         <TextBlock x:Name="Next2LyricText" FontSize="12" Opacity="0.32" TextAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
+                    <Border x:Name="ArticlePanel" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,128,0,0"
+                            Width="295" Height="397" Padding="30" CornerRadius="18" BorderThickness="1"
+                            BorderBrush="#24B69CFF" Background="#B80A0B12" IsHitTestVisible="False" Visibility="Collapsed">
+                        <Grid x:Name="ArticlePageViewport">
+                            <TextBlock x:Name="ArticleCurrentPageText" FontSize="13" Foreground="#FFF8F2" TextAlignment="Left"
+                                       TextWrapping="Wrap" VerticalAlignment="Top" />
+                            <TextBlock x:Name="ArticleNextPageText" FontSize="13" Foreground="#FFF8F2" TextAlignment="Left"
+                                       TextWrapping="Wrap" VerticalAlignment="Top" Opacity="0" Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
                     <StackPanel x:Name="IntroOverlay" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="18,70,18,0" Spacing="10" MaxWidth="320" IsHitTestVisible="False" Visibility="Collapsed">
                         <TextBlock x:Name="IntroTitleText" Text="" FontSize="24" FontWeight="SemiBold" Foreground="#FFFCF6" TextAlignment="Center" TextWrapping="Wrap" />
                         <Rectangle Height="1" Width="58" Fill="{StaticResource SikaAccent}" HorizontalAlignment="Center" Opacity="0.8" />
