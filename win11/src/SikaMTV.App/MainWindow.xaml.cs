@@ -50,6 +50,7 @@ public sealed partial class MainWindow : Window
     private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _lyricWhiteBrush = new(Windows.UI.Color.FromArgb(255, 255, 255, 255));
     private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _lyricAccentBrush = new(Windows.UI.Color.FromArgb(255, 197, 176, 255));
     private readonly Dictionary<TextBlock, DropShadow> _textShadows = [];
+    private readonly Dictionary<TextBlock, SpriteVisual> _textShadowVisuals = [];
     private IReadOnlyList<SubtitleCue> _cues = [];
     private IReadOnlyList<string> _articlePages = [];
     private IReadOnlyList<ArticlePageTiming> _articleTimings = [];
@@ -82,7 +83,11 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        InitializeTextShadows();
+        LyricsOverlay.Loaded += (_, _) =>
+        {
+            InitializeTextShadows();
+            ApplyLyricsStyle();
+        };
         IntroOverlay.RenderTransform = _introTranslate;
         AssetsList.ItemsSource = _assets;
         _audioPlayer.MediaOpened += AudioPlayer_MediaOpened;
@@ -1223,18 +1228,26 @@ public sealed partial class MainWindow : Window
 
     private void InitializeTextShadows()
     {
+        if (_textShadows.Count > 0) return;
         var compositor = ElementCompositionPreview.GetElementVisual(CurrentLyricText).Compositor;
         var lyricTexts = LyricTextElements();
         foreach (var text in lyricTexts.Concat([IntroTitleText, IntroAuthorText, IntroDateText]))
         {
             var shadow = compositor.CreateDropShadow();
-            shadow.SourcePolicy = CompositionDropShadowSourcePolicy.InheritFromVisualContent;
+            shadow.Mask = text.GetAlphaMask();
             shadow.Color = Windows.UI.Color.FromArgb(255, 255, 255, 255);
             shadow.Offset = Vector3.Zero;
             shadow.Opacity = lyricTexts.Contains(text) ? 0 : 0.20f;
             shadow.BlurRadius = lyricTexts.Contains(text) ? 0 : 0.5f;
-            ElementCompositionPreview.GetElementVisual(text).Shadow = shadow;
+            var hostVisual = ElementCompositionPreview.GetElementVisual(text);
+            var shadowVisual = compositor.CreateSpriteVisual();
+            shadowVisual.Shadow = shadow;
+            ElementCompositionPreview.SetElementChildVisual(text, shadowVisual);
+            var sizeAnimation = compositor.CreateExpressionAnimation("hostVisual.Size");
+            sizeAnimation.SetReferenceParameter("hostVisual", hostVisual);
+            shadowVisual.StartAnimation(nameof(Visual.Size), sizeAnimation);
             _textShadows[text] = shadow;
+            _textShadowVisuals[text] = shadowVisual;
         }
     }
 
