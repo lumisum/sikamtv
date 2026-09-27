@@ -18,8 +18,8 @@ public static class SceneSubjectAnalyzer
         for (var y = 0; y < MaskSize; y += 4)
         for (var x = 0; x < MaskSize; x += 4)
         {
-            var (r, g, b) = Sample(x, y);
-            meanR += r; meanG += g; meanB += b;
+            var sample = Sample(x, y);
+            meanR += sample.X; meanG += sample.Y; meanB += sample.Z;
         }
         const int sampleCount = (MaskSize / 4) * (MaskSize / 4);
         var average = new Vector3((float)(meanR / sampleCount), (float)(meanG / sampleCount), (float)(meanB / sampleCount));
