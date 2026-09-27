@@ -9,8 +9,11 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <mutex>
 #include <vector>
 
@@ -20,6 +23,20 @@ namespace
 {
     constexpr UINT NvidiaVendorId = 0x10DE;
     constexpr UINT VisualizerBands = 64;
+    constexpr size_t AdvancedSettingCount = 41;
+    std::array<float, AdvancedSettingCount> AdvancedSettings = {
+        0.31f, 0.96f, 0.86f, 0.72f,
+        0.72f, 0.28f, 0.72f, 0.56f,
+        0.55f, 0.88f, 1.0f, 0.74f,
+        0.48f, 0.72f, 1.0f, 0.73f,
+        0.54f, 1.0f, 0.0f, 0.58f,
+        0.68f, 0.52f, 0.70f, 1.0f,
+        0.82f, 0.12f, 0.20f, 1.0f,
+        1.0f, 1.0f, 0.0f,
+        0.0f, 0.42f, 0.34f, 0.14f,
+        0.22f, 0.12f, 0.82f, 1.0f,
+        0.12f, 1.0f
+    };
 
     struct alignas(16) VisualState
     {
@@ -32,11 +49,24 @@ namespace
         float padding[2];
         float bands[VisualizerBands];
         float backgroundInfo[4];
+        float backgroundTransition[4];
         float backgroundEffects[4];
         float visualizerEffects[4];
+        float scenePalettePrimary[4];
+        float scenePaletteSecondary[4];
+        float visualizerAdvanced1[4];
+        float visualizerAdvanced2[4];
+        float visualizerAdvanced3[4];
+        float atmosphereSettings[4];
+        float atmosphereGeometry[4];
+        float backgroundColorSettings[4];
+        float backgroundMotion[4];
+        float backgroundMotion2[4];
+        float backgroundMotion3[4];
+        float backgroundTimeline[4];
     };
 
-    static_assert(sizeof(VisualState) == 336);
+    static_assert(sizeof(VisualState) == 544);
 
     std::mutex DeviceMutex;
     ComPtr<ID3D11Device> Device;
@@ -50,6 +80,12 @@ namespace
     ComPtr<ID3D11BlendState> BlendState;
     ComPtr<ID3D11Texture2D> BackgroundTexture;
     ComPtr<ID3D11ShaderResourceView> BackgroundView;
+    ComPtr<ID3D11Texture2D> SecondaryBackgroundTexture;
+    ComPtr<ID3D11ShaderResourceView> SecondaryBackgroundView;
+    ComPtr<ID3D11Texture2D> SubjectMaskTexture;
+    ComPtr<ID3D11ShaderResourceView> SubjectMaskView;
+    ComPtr<ID3D11Texture2D> SecondarySubjectMaskTexture;
+    ComPtr<ID3D11ShaderResourceView> SecondarySubjectMaskView;
     ComPtr<ID3D11SamplerState> BackgroundSampler;
     ComPtr<ID3D11Texture2D> ExportTexture;
     ComPtr<ID3D11Texture2D> ExportStagingTexture;
@@ -59,6 +95,11 @@ namespace
     UINT SurfaceHeight = 0;
     UINT BackgroundWidth = 0;
     UINT BackgroundHeight = 0;
+    UINT SecondaryBackgroundWidth = 0;
+    UINT SecondaryBackgroundHeight = 0;
+    float BackgroundTransitionProgress = 0;
+    int BackgroundTransitionKind = 0;
+    std::array<float, 4> BackgroundMotionTimeline{};
     UINT ExportWidth = 0;
     UINT ExportHeight = 0;
 
@@ -208,12 +249,35 @@ namespace
         state.backgroundInfo[0] = BackgroundView ? 1.0f : 0.0f;
         state.backgroundInfo[1] = static_cast<float>(BackgroundWidth);
         state.backgroundInfo[2] = static_cast<float>(BackgroundHeight);
+        state.backgroundTransition[0] = BackgroundTransitionProgress;
+        state.backgroundTransition[1] = static_cast<float>(BackgroundTransitionKind);
+        state.backgroundTransition[2] = static_cast<float>(SecondaryBackgroundWidth);
+        state.backgroundTransition[3] = static_cast<float>(SecondaryBackgroundHeight);
         state.backgroundEffects[0] = std::clamp(blur, 0.0f, 1.0f);
         state.backgroundEffects[1] = std::clamp(vignette, 0.0f, 1.0f);
         state.backgroundEffects[2] = std::clamp(saturation, 0.0f, 2.0f);
         state.backgroundEffects[3] = std::clamp(slowZoom, 0.0f, 1.0f);
         state.visualizerEffects[0] = std::clamp(visualizerScale, 0.4f, 1.5f);
         state.visualizerEffects[1] = rainbow > 0.5f ? 1.0f : 0.0f;
+        state.visualizerEffects[2] = AdvancedSettings[26];
+        state.scenePalettePrimary[0] = AdvancedSettings[12];
+        state.scenePalettePrimary[1] = AdvancedSettings[13];
+        state.scenePalettePrimary[2] = AdvancedSettings[14];
+        state.scenePaletteSecondary[0] = AdvancedSettings[15];
+        state.scenePaletteSecondary[1] = AdvancedSettings[16];
+        state.scenePaletteSecondary[2] = AdvancedSettings[17];
+        std::copy_n(AdvancedSettings.begin(), 4, state.visualizerAdvanced1);
+        std::copy_n(AdvancedSettings.begin() + 4, 4, state.visualizerAdvanced2);
+        std::copy_n(AdvancedSettings.begin() + 8, 4, state.visualizerAdvanced3);
+        std::copy_n(AdvancedSettings.begin() + 18, 4, state.atmosphereSettings);
+        std::copy_n(AdvancedSettings.begin() + 22, 4, state.atmosphereGeometry);
+        std::copy_n(AdvancedSettings.begin() + 27, 4, state.backgroundColorSettings);
+        std::copy_n(AdvancedSettings.begin() + 31, 4, state.backgroundMotion);
+        std::copy_n(AdvancedSettings.begin() + 35, 4, state.backgroundMotion2);
+        std::copy_n(AdvancedSettings.begin() + 39, 2, state.backgroundMotion3);
+        state.backgroundMotion3[2] = SubjectMaskView ? 1.0f : 0.0f;
+        state.backgroundMotion3[3] = SecondarySubjectMaskView ? 1.0f : 0.0f;
+        std::copy(BackgroundMotionTimeline.begin(), BackgroundMotionTimeline.end(), state.backgroundTimeline);
         state.visualizerKind = std::min(visualizerKind, 10u);
         state.bandCount = std::clamp(static_cast<UINT>(std::max(0, bandCount)), 1u, VisualizerBands);
         if (bands != nullptr)
@@ -244,13 +308,15 @@ namespace
         Context->VSSetShader(VertexShader.Get(), nullptr, 0);
         Context->PSSetShader(PixelShader.Get(), nullptr, 0);
         Context->PSSetConstantBuffers(0, 1, ConstantBuffer.GetAddressOf());
-        auto backgroundView = BackgroundView.Get();
-        Context->PSSetShaderResources(0, 1, &backgroundView);
+        ID3D11ShaderResourceView* backgroundViews[] = {
+            BackgroundView.Get(), SecondaryBackgroundView.Get(), SubjectMaskView.Get(), SecondarySubjectMaskView.Get()
+        };
+        Context->PSSetShaderResources(0, 4, backgroundViews);
         auto sampler = BackgroundSampler.Get();
         Context->PSSetSamplers(0, 1, &sampler);
         Context->Draw(3, 0);
-        ID3D11ShaderResourceView* noBackground = nullptr;
-        Context->PSSetShaderResources(0, 1, &noBackground);
+        ID3D11ShaderResourceView* noBackground[] = { nullptr, nullptr, nullptr, nullptr };
+        Context->PSSetShaderResources(0, 4, noBackground);
         Context->OMSetRenderTargets(0, nullptr, nullptr);
         return S_OK;
     }
@@ -417,13 +483,154 @@ int __cdecl SikaMTV_SetBackgroundImage(const unsigned char* pixels, unsigned int
     return result;
 }
 
+int __cdecl SikaMTV_SetBackgroundImageSecondary(const unsigned char* pixels, unsigned int width, unsigned int height, unsigned int stride)
+{
+    if (pixels == nullptr || width == 0 || height == 0 || stride < width * 4) return E_INVALIDARG;
+    std::scoped_lock lock(DeviceMutex);
+    if (!Device) return E_UNEXPECTED;
+    if (SecondaryBackgroundTexture && SecondaryBackgroundWidth == width && SecondaryBackgroundHeight == height)
+    {
+        Context->UpdateSubresource(SecondaryBackgroundTexture.Get(), 0, nullptr, pixels, stride, 0);
+        return S_OK;
+    }
+    SecondaryBackgroundView.Reset();
+    SecondaryBackgroundTexture.Reset();
+    D3D11_TEXTURE2D_DESC description{};
+    description.Width = width;
+    description.Height = height;
+    description.MipLevels = 1;
+    description.ArraySize = 1;
+    description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    description.SampleDesc.Count = 1;
+    description.Usage = D3D11_USAGE_DEFAULT;
+    description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA initial{};
+    initial.pSysMem = pixels;
+    initial.SysMemPitch = stride;
+    auto result = Device->CreateTexture2D(&description, &initial, SecondaryBackgroundTexture.GetAddressOf());
+    if (FAILED(result)) return result;
+    result = Device->CreateShaderResourceView(SecondaryBackgroundTexture.Get(), nullptr, SecondaryBackgroundView.GetAddressOf());
+    if (FAILED(result)) SecondaryBackgroundTexture.Reset();
+    else
+    {
+        SecondaryBackgroundWidth = width;
+        SecondaryBackgroundHeight = height;
+    }
+    return result;
+}
+
+int __cdecl SikaMTV_SetSubjectMask(const unsigned char* pixels, unsigned int width, unsigned int height, unsigned int stride, int secondary)
+{
+    if (secondary != 0 && secondary != 1) return E_INVALIDARG;
+    if (pixels == nullptr || width == 0 || height == 0)
+    {
+        std::scoped_lock lock(DeviceMutex);
+        auto& texture = secondary ? SecondarySubjectMaskTexture : SubjectMaskTexture;
+        auto& view = secondary ? SecondarySubjectMaskView : SubjectMaskView;
+        view.Reset();
+        texture.Reset();
+        return S_OK;
+    }
+    if (stride < width || static_cast<std::uint64_t>(stride) * height > MAXDWORD) return E_INVALIDARG;
+    std::scoped_lock lock(DeviceMutex);
+    if (!Device) return E_UNEXPECTED;
+    auto& texture = secondary ? SecondarySubjectMaskTexture : SubjectMaskTexture;
+    auto& view = secondary ? SecondarySubjectMaskView : SubjectMaskView;
+    if (texture && view)
+    {
+        D3D11_TEXTURE2D_DESC existing{};
+        texture->GetDesc(&existing);
+        if (existing.Width == width && existing.Height == height)
+        {
+            Context->UpdateSubresource(texture.Get(), 0, nullptr, pixels, stride, 0);
+            return S_OK;
+        }
+    }
+    D3D11_TEXTURE2D_DESC description{};
+    description.Width = width;
+    description.Height = height;
+    description.MipLevels = 1;
+    description.ArraySize = 1;
+    description.Format = DXGI_FORMAT_R8_UNORM;
+    description.SampleDesc.Count = 1;
+    description.Usage = D3D11_USAGE_DEFAULT;
+    description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA initial{};
+    initial.pSysMem = pixels;
+    initial.SysMemPitch = stride;
+    auto result = Device->CreateTexture2D(&description, &initial, texture.ReleaseAndGetAddressOf());
+    if (FAILED(result)) return result;
+    result = Device->CreateShaderResourceView(texture.Get(), nullptr, view.ReleaseAndGetAddressOf());
+    if (FAILED(result)) texture.Reset();
+    return result;
+}
+
+int __cdecl SikaMTV_SetBackgroundTransition(float progress, int transitionKind)
+{
+    if (!std::isfinite(progress) || transitionKind < 0 || transitionKind > 4) return E_INVALIDARG;
+    std::scoped_lock lock(DeviceMutex);
+    BackgroundTransitionProgress = std::clamp(progress, 0.0f, 1.0f);
+    BackgroundTransitionKind = transitionKind;
+    return S_OK;
+}
+
+int __cdecl SikaMTV_SetBackgroundMotionTimeline(float currentProgress, float currentReactivity,
+    float nextProgress, float nextReactivity)
+{
+    const float values[] = { currentProgress, currentReactivity, nextProgress, nextReactivity };
+    if (!std::all_of(std::begin(values), std::end(values), [](float value) { return std::isfinite(value); })) return E_INVALIDARG;
+    std::scoped_lock lock(DeviceMutex);
+    for (size_t index = 0; index < BackgroundMotionTimeline.size(); ++index)
+        BackgroundMotionTimeline[index] = std::clamp(values[index], 0.0f, 1.0f);
+    return S_OK;
+}
+
+int __cdecl SikaMTV_SetScenePalette(float primaryRed, float primaryGreen, float primaryBlue,
+    float secondaryRed, float secondaryGreen, float secondaryBlue)
+{
+    const float values[] = { primaryRed, primaryGreen, primaryBlue, secondaryRed, secondaryGreen, secondaryBlue };
+    if (!std::all_of(std::begin(values), std::end(values), [](float value) { return std::isfinite(value); })) return E_INVALIDARG;
+    std::scoped_lock lock(DeviceMutex);
+    for (size_t index = 0; index < 3; ++index)
+    {
+        AdvancedSettings[12 + index] = std::clamp(values[index], 0.0f, 1.0f);
+        AdvancedSettings[15 + index] = std::clamp(values[index + 3], 0.0f, 1.0f);
+    }
+    return S_OK;
+}
+
 void __cdecl SikaMTV_ClearBackgroundImage()
 {
     std::scoped_lock lock(DeviceMutex);
     BackgroundView.Reset();
     BackgroundTexture.Reset();
+    SecondaryBackgroundView.Reset();
+    SecondaryBackgroundTexture.Reset();
+    SubjectMaskView.Reset();
+    SubjectMaskTexture.Reset();
+    SecondarySubjectMaskView.Reset();
+    SecondarySubjectMaskTexture.Reset();
+    BackgroundTransitionProgress = 0;
+    BackgroundTransitionKind = 0;
+    BackgroundMotionTimeline.fill(0);
     BackgroundWidth = 0;
     BackgroundHeight = 0;
+    SecondaryBackgroundWidth = 0;
+    SecondaryBackgroundHeight = 0;
+}
+
+int __cdecl SikaMTV_SetAdvancedVisualSettings(const float* settings, int count)
+{
+    if (settings == nullptr || count < static_cast<int>(AdvancedSettingCount)) return E_INVALIDARG;
+    std::scoped_lock lock(DeviceMutex);
+    for (size_t index = 0; index < AdvancedSettingCount; ++index)
+        AdvancedSettings[index] = std::isfinite(settings[index]) ? settings[index] : AdvancedSettings[index];
+    AdvancedSettings[18] = std::clamp(AdvancedSettings[18], 0.0f, 16.0f);
+    AdvancedSettings[19] = std::clamp(AdvancedSettings[19], 0.0f, 1.0f);
+    AdvancedSettings[20] = std::clamp(AdvancedSettings[20], 0.0f, 1.0f);
+    AdvancedSettings[21] = std::clamp(AdvancedSettings[21], 0.0f, 1.0f);
+    AdvancedSettings[22] = std::clamp(AdvancedSettings[22], 0.48f, 0.88f);
+    return S_OK;
 }
 
 int __cdecl SikaMTV_RenderVisualizer(float timeSeconds, unsigned int visualizerKind, float intensity, float blur, float vignette, float saturation, float slowZoom, float visualizerScale, float rainbow, const float* bands, int bandCount)
@@ -506,11 +713,22 @@ void __cdecl SikaMTV_ShutdownGpu()
     SelectedNvidia = false;
     BackgroundView.Reset();
     BackgroundTexture.Reset();
+    SecondaryBackgroundView.Reset();
+    SecondaryBackgroundTexture.Reset();
+    SubjectMaskView.Reset();
+    SubjectMaskTexture.Reset();
+    SecondarySubjectMaskView.Reset();
+    SecondarySubjectMaskTexture.Reset();
     ExportRenderTarget.Reset();
     ExportStagingTexture.Reset();
     ExportTexture.Reset();
     BackgroundWidth = 0;
     BackgroundHeight = 0;
+    SecondaryBackgroundWidth = 0;
+    SecondaryBackgroundHeight = 0;
+    BackgroundTransitionProgress = 0;
+    BackgroundTransitionKind = 0;
+    BackgroundMotionTimeline.fill(0);
     ExportWidth = 0;
     ExportHeight = 0;
 }

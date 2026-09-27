@@ -9,6 +9,7 @@
 #include <mferror.h>
 #include <mfreadwrite.h>
 #include <propvarutil.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -17,11 +18,15 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -46,7 +51,7 @@ namespace
 
     struct ExportRequest
     {
-        std::wstring backgroundVideoPath;
+        std::wstring backgroundManifest;
         std::wstring audioPath;
         std::wstring outputPath;
         std::wstring textTimeline;
@@ -66,17 +71,31 @@ namespace
         float slowZoom = 0;
         float visualizerScale = 1;
         float rainbow = 1;
+        float visualizerSmoothing = 0.72f;
         float lyricFontSize = 46;
         float lyricPosition = 0.6f;
+        float lyricWidth = 0.82f;
+        float lyricLineSpacing = 1.85f;
+        float lyricInactiveOpacity = 0.24f;
+        float lyricGlow = 0.82f;
+        float lyricAnimationDuration = 0.62f;
+        int lyricAlignment = 1;
         int lyricWindowCount = 5;
         int lyricAnimation = 0;
         bool articleMode = false;
         float articleFontSize = 38;
         float articleLineSpacing = 1.68f;
         float introDuration = 12;
+        float introTitleSize = 72;
+        float introAnimationDuration = 1.15f;
+        bool introEnabled = true;
         bool showIntroDate = true;
         int introAnimation = 0;
         bool loopBackgroundVideo = true;
+        int backgroundTransition = 0;
+        float backgroundTransitionDuration = 1.35f;
+        bool backgroundAudioEnabled = false;
+        float backgroundAudioVolume = 0.25f;
     };
 
     std::atomic<bool> ExportRunning{ false };
@@ -166,6 +185,214 @@ namespace
         return result;
     }
 
+    struct BackgroundMediaDescriptor
+    {
+        bool video = false;
+        std::wstring path;
+        float primary[3] = { 0.48f, 0.72f, 1.0f };
+        float secondary[3] = { 0.82f, 0.52f, 0.94f };
+        std::wstring subjectMaskPath;
+    };
+
+    std::vector<BackgroundMediaDescriptor> ParseBackgroundManifest(const std::wstring& manifest)
+    {
+        std::vector<BackgroundMediaDescriptor> result;
+        std::wistringstream lines(manifest);
+        std::wstring line;
+        while (std::getline(lines, line))
+        {
+            const auto first = line.find(L'|');
+            const auto second = first == std::wstring::npos ? first : line.find(L'|', first + 1);
+            const auto third = second == std::wstring::npos ? second : line.find(L'|', second + 1);
+            const auto fourth = third == std::wstring::npos ? third : line.find(L'|', third + 1);
+            if (first != 1 || second == std::wstring::npos) continue;
+            BackgroundMediaDescriptor item;
+            item.video = line[0] == L'V';
+            item.path = line.substr(first + 1, second - first - 1);
+            if (third != std::wstring::npos)
+            {
+                auto parseColor = [](const std::wstring& value, float color[3])
+                {
+                    std::wistringstream parts(value);
+                    std::wstring component;
+                    for (size_t i = 0; i < 3 && std::getline(parts, component, L','); ++i)
+                    {
+                        try { color[i] = std::clamp(std::stof(component), 0.0f, 1.0f); }
+                        catch (...) { }
+                    }
+                };
+                parseColor(line.substr(second + 1, third - second - 1), item.primary);
+                parseColor(line.substr(third + 1, fourth == std::wstring::npos ? std::wstring::npos : fourth - third - 1), item.secondary);
+                if (fourth != std::wstring::npos) item.subjectMaskPath = line.substr(fourth + 1);
+            }
+            if (!item.path.empty()) result.push_back(std::move(item));
+        }
+        return result;
+    }
+
+    std::vector<unsigned char> ReadSubjectMask(const std::wstring& path)
+    {
+        constexpr size_t MaskBytes = 256u * 256u;
+        if (path.empty()) return {};
+        std::ifstream file(std::filesystem::path(path), std::ios::binary | std::ios::ate);
+        if (!file || file.tellg() != static_cast<std::streamoff>(MaskBytes)) return {};
+        std::vector<unsigned char> pixels(MaskBytes);
+        file.seekg(0);
+        if (!file.read(reinterpret_cast<char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()))) return {};
+        return pixels;
+    }
+
+    HRESULT DecodeBackgroundImage(const std::wstring& path, std::vector<unsigned char>& pixels, UINT& width, UINT& height)
+    {
+        pixels.clear();
+        width = height = 0;
+        ComPtr<IWICImagingFactory> factory;
+        auto result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(factory.GetAddressOf()));
+        if (FAILED(result)) return result;
+        ComPtr<IWICBitmapDecoder> decoder;
+        result = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+            WICDecodeMetadataCacheOnLoad, decoder.GetAddressOf());
+        if (FAILED(result)) return result;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        result = decoder->GetFrame(0, frame.GetAddressOf());
+        if (FAILED(result)) return result;
+        WICBitmapTransformOptions orientationTransform = WICBitmapTransformRotate0;
+        ComPtr<IWICMetadataQueryReader> metadata;
+        if (SUCCEEDED(frame->GetMetadataQueryReader(metadata.GetAddressOf())))
+        {
+            PROPVARIANT orientation;
+            PropVariantInit(&orientation);
+            if (SUCCEEDED(metadata->GetMetadataByName(L"/app1/ifd/{ushort=274}", &orientation)) && orientation.vt == VT_UI2)
+            {
+                switch (orientation.uiVal)
+                {
+                case 2: orientationTransform = WICBitmapTransformFlipHorizontal; break;
+                case 3: orientationTransform = WICBitmapTransformRotate180; break;
+                case 4: orientationTransform = WICBitmapTransformFlipVertical; break;
+                case 5: orientationTransform = static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate90 | WICBitmapTransformFlipHorizontal); break;
+                case 6: orientationTransform = WICBitmapTransformRotate90; break;
+                case 7: orientationTransform = static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate270 | WICBitmapTransformFlipHorizontal); break;
+                case 8: orientationTransform = WICBitmapTransformRotate270; break;
+                default: break;
+                }
+            }
+            PropVariantClear(&orientation);
+        }
+
+        ComPtr<IWICBitmapSource> orientedSource;
+        if (orientationTransform != WICBitmapTransformRotate0)
+        {
+            ComPtr<IWICBitmapFlipRotator> rotator;
+            result = factory->CreateBitmapFlipRotator(rotator.GetAddressOf());
+            if (FAILED(result)) return result;
+            result = rotator->Initialize(frame.Get(), orientationTransform);
+            if (FAILED(result)) return result;
+            result = rotator.As(&orientedSource);
+            if (FAILED(result)) return result;
+        }
+        else
+        {
+            result = frame.As(&orientedSource);
+            if (FAILED(result)) return result;
+        }
+
+        UINT sourceWidth = 0, sourceHeight = 0;
+        result = orientedSource->GetSize(&sourceWidth, &sourceHeight);
+        if (FAILED(result) || sourceWidth == 0 || sourceHeight == 0) return FAILED(result) ? result : E_INVALIDARG;
+
+        const double scale = std::min({ 1.0, 1920.0 / sourceWidth, 1080.0 / sourceHeight });
+        width = std::max(1u, static_cast<UINT>(std::lround(sourceWidth * scale)));
+        height = std::max(1u, static_cast<UINT>(std::lround(sourceHeight * scale)));
+        ComPtr<IWICBitmapSource> source;
+        if (width != sourceWidth || height != sourceHeight)
+        {
+            ComPtr<IWICBitmapScaler> scaler;
+            result = factory->CreateBitmapScaler(scaler.GetAddressOf());
+            if (FAILED(result)) return result;
+            result = scaler->Initialize(orientedSource.Get(), width, height, WICBitmapInterpolationModeFant);
+            if (FAILED(result)) return result;
+            result = scaler.As(&source);
+        }
+        else source = orientedSource;
+        if (FAILED(result)) return result;
+
+        ComPtr<IWICFormatConverter> converter;
+        result = factory->CreateFormatConverter(converter.GetAddressOf());
+        if (FAILED(result)) return result;
+        result = converter->Initialize(source.Get(), GUID_WICPixelFormat32bppBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom);
+        if (FAILED(result)) return result;
+        const auto stride64 = static_cast<UINT64>(width) * 4;
+        const auto byteCount64 = stride64 * height;
+        if (byteCount64 > static_cast<UINT64>(std::numeric_limits<size_t>::max()) || byteCount64 > MAXDWORD) return E_OUTOFMEMORY;
+        pixels.resize(static_cast<size_t>(byteCount64));
+        result = converter->CopyPixels(nullptr, static_cast<UINT>(stride64), static_cast<UINT>(byteCount64), pixels.data());
+        if (FAILED(result)) pixels.clear();
+        return result;
+    }
+
+    struct BackgroundTimelineState
+    {
+        size_t currentIndex = 0;
+        std::optional<size_t> nextIndex;
+        double currentLocalTime = 0;
+        double nextLocalTime = 0;
+        double segmentDuration = 0;
+        float transitionProgress = 0;
+        int transitionKind = 0;
+    };
+
+    BackgroundTimelineState BackgroundStateAt(double time, double duration,
+        const std::vector<BackgroundMediaDescriptor>& media, int transition, double transitionDuration,
+        double singleVideoDuration)
+    {
+        BackgroundTimelineState state{};
+        if (media.empty()) return state;
+        if (media.size() == 1 && media[0].video && singleVideoDuration > 0)
+        {
+            const auto blend = std::min(std::max(0.2, transitionDuration), singleVideoDuration * 0.25);
+            const auto cycle = std::max(0.001, singleVideoDuration - blend);
+            const auto safeTime = std::max(0.0, time);
+            const auto playhead = safeTime < singleVideoDuration
+                ? safeTime : std::fmod(safeTime - singleVideoDuration, cycle) + blend;
+            state.segmentDuration = singleVideoDuration;
+            state.currentLocalTime = playhead;
+            if (playhead >= singleVideoDuration - blend)
+            {
+                state.nextIndex = 0;
+                state.nextLocalTime = std::max(0.0, playhead - (singleVideoDuration - blend));
+                state.transitionProgress = static_cast<float>(std::clamp(state.nextLocalTime / blend, 0.0, 1.0));
+                state.transitionKind = 1;
+            }
+            return state;
+        }
+        if (media.size() == 1 || duration <= 0)
+        {
+            state.segmentDuration = std::max(duration, 1.0);
+            state.currentLocalTime = std::max(0.0, time);
+            return state;
+        }
+
+        state.segmentDuration = duration / static_cast<double>(media.size());
+        const auto safeTime = std::clamp(time, 0.0, std::max(0.0, duration - 0.000001));
+        const auto active = std::min(media.size() - 1, static_cast<size_t>(safeTime / state.segmentDuration));
+        const auto local = safeTime - static_cast<double>(active) * state.segmentDuration;
+        const auto blend = std::min(std::max(0.05, transitionDuration), state.segmentDuration * 0.45);
+        state.currentIndex = active;
+        state.currentLocalTime = local;
+        if (transition != 3 && active > 0 && local < blend)
+        {
+            state.currentIndex = active - 1;
+            state.nextIndex = active;
+            state.currentLocalTime = state.segmentDuration;
+            state.nextLocalTime = local;
+            state.transitionProgress = static_cast<float>(std::clamp(local / blend, 0.0, 1.0));
+            state.transitionKind = std::clamp(transition + 1, 1, 3);
+        }
+        return state;
+    }
+
     class BackgroundVideo
     {
     public:
@@ -219,7 +446,7 @@ namespace
             return S_OK;
         }
 
-        HRESULT Update(double seconds)
+        HRESULT Update(double seconds, bool secondary = false)
         {
             if (!reader) return E_UNEXPECTED;
             if (duration > 0 && loop) seconds = std::fmod(std::max(0.0, seconds), duration);
@@ -278,7 +505,9 @@ namespace
             }
 
             if (!hasFrame) return MF_E_INVALID_FILE_FORMAT;
-            return SikaMTV_SetBackgroundImage(pixels.data(), frameWidth, frameHeight, frameWidth * 4);
+            return secondary
+                ? SikaMTV_SetBackgroundImageSecondary(pixels.data(), frameWidth, frameHeight, frameWidth * 4)
+                : SikaMTV_SetBackgroundImage(pixels.data(), frameWidth, frameHeight, frameWidth * 4);
         }
 
         double duration = 0;
@@ -295,19 +524,90 @@ namespace
         ComPtr<IMFDXGIDeviceManager> deviceManager;
     };
 
+    struct BackgroundSource
+    {
+        size_t index = std::numeric_limits<size_t>::max();
+        BackgroundMediaDescriptor descriptor;
+        std::unique_ptr<BackgroundVideo> video;
+        std::vector<unsigned char> pixels;
+        std::vector<unsigned char> subjectMask;
+        UINT width = 0;
+        UINT height = 0;
+        int imageSlot = -1;
+        int maskSlot = -1;
+
+        HRESULT Open(size_t sourceIndex, const BackgroundMediaDescriptor& source, bool loop)
+        {
+            index = sourceIndex;
+            descriptor = source;
+            pixels.clear();
+            subjectMask.clear();
+            video.reset();
+            width = height = 0;
+            imageSlot = -1;
+            maskSlot = -1;
+            if (source.video)
+            {
+                video = std::make_unique<BackgroundVideo>();
+                auto result = video->Open(source.path, loop);
+                if (FAILED(result)) video.reset();
+                return result;
+            }
+            auto result = DecodeBackgroundImage(source.path, pixels, width, height);
+            if (SUCCEEDED(result)) subjectMask = ReadSubjectMask(source.subjectMaskPath);
+            return result;
+        }
+
+        double duration() const { return video ? video->duration : 0; }
+
+        HRESULT Update(double seconds, bool secondary)
+        {
+            const int slot = secondary ? 1 : 0;
+            if (maskSlot != slot)
+            {
+                const auto maskResult = subjectMask.empty()
+                    ? SikaMTV_SetSubjectMask(nullptr, 0, 0, 0, slot)
+                    : SikaMTV_SetSubjectMask(subjectMask.data(), 256, 256, 256, slot);
+                if (FAILED(static_cast<HRESULT>(maskResult))) return maskResult;
+                maskSlot = slot;
+            }
+            if (video) return video->Update(seconds, secondary);
+            if (pixels.empty()) return MF_E_INVALID_FILE_FORMAT;
+            if (imageSlot == slot) return S_OK;
+            const auto result = secondary
+                ? SikaMTV_SetBackgroundImageSecondary(pixels.data(), width, height, width * 4)
+                : SikaMTV_SetBackgroundImage(pixels.data(), width, height, width * 4);
+            if (SUCCEEDED(static_cast<HRESULT>(result))) imageSlot = slot;
+            return result;
+        }
+    };
+
     struct PreviewVideoRequest
     {
-        std::wstring path;
-        double seconds = 0;
+        std::wstring primaryPath;
+        double primarySeconds = 0;
+        std::wstring secondaryPath;
+        double secondarySeconds = 0;
         bool loop = true;
         std::uint64_t version = 0;
+    };
+
+    struct PreviewTrackState
+    {
+        std::unique_ptr<BackgroundVideo> source;
+        std::wstring openedPath;
+        std::wstring failedPath;
+        bool openedLoop = true;
+        bool failedLoop = true;
     };
 
     std::mutex PreviewRequestMutex;
     std::mutex PreviewDecodeMutex;
     std::condition_variable PreviewRequestChanged;
-    std::wstring PreviewRequestedPath;
-    double PreviewRequestedSeconds = 0;
+    std::wstring PreviewRequestedPrimaryPath;
+    double PreviewRequestedPrimarySeconds = 0;
+    std::wstring PreviewRequestedSecondaryPath;
+    double PreviewRequestedSecondarySeconds = 0;
     bool PreviewRequestedLoop = true;
     std::uint64_t PreviewRequestVersion = 0;
     std::jthread PreviewVideoThread;
@@ -335,11 +635,8 @@ namespace
             return;
         }
 
-        std::unique_ptr<BackgroundVideo> source;
-        std::wstring openedPath;
-        std::wstring failedPath;
-        bool openedLoop = true;
-        bool failedLoop = true;
+        PreviewTrackState primary;
+        PreviewTrackState secondary;
         std::uint64_t processedVersion = 0;
         while (!stopToken.stop_requested())
         {
@@ -351,58 +648,55 @@ namespace
                     return stopToken.stop_requested() || PreviewRequestVersion != processedVersion;
                 });
                 if (stopToken.stop_requested()) break;
-                request = { PreviewRequestedPath, PreviewRequestedSeconds, PreviewRequestedLoop, PreviewRequestVersion };
-            }
-
-            if (request.path.empty())
-            {
-                source.reset();
-                openedPath.clear();
-                failedPath.clear();
-                processedVersion = request.version;
-                PreviewVideoResult.store(S_OK, std::memory_order_relaxed);
-                continue;
-            }
-            if (request.path == failedPath && request.loop == failedLoop)
-            {
-                processedVersion = request.version;
-                continue;
+                request = { PreviewRequestedPrimaryPath, PreviewRequestedPrimarySeconds,
+                    PreviewRequestedSecondaryPath, PreviewRequestedSecondarySeconds,
+                    PreviewRequestedLoop, PreviewRequestVersion };
             }
             if (PreviewVideoSuspended.load(std::memory_order_acquire))
             {
                 processedVersion = request.version;
                 continue;
             }
-            if (!source || openedPath != request.path || openedLoop != request.loop)
+            auto updateTrack = [&](const std::wstring& path, double seconds, PreviewTrackState& track, bool isSecondary)
             {
-                auto replacement = std::make_unique<BackgroundVideo>();
-                mfResult = replacement->Open(request.path, request.loop);
-                if (FAILED(mfResult))
+                if (path.empty())
                 {
-                    source.reset();
-                    openedPath.clear();
-                    failedPath = request.path;
-                    failedLoop = request.loop;
-                    PreviewVideoResult.store(mfResult, std::memory_order_relaxed);
-                    processedVersion = request.version;
-                    continue;
+                    track.source.reset();
+                    track.openedPath.clear();
+                    track.failedPath.clear();
+                    return S_OK;
                 }
-                source = std::move(replacement);
-                openedPath = request.path;
-                failedPath.clear();
-                openedLoop = request.loop;
-            }
-
-            HRESULT updateResult = S_OK;
-            {
+                if (path == track.failedPath && request.loop == track.failedLoop) return MF_E_INVALID_FILE_FORMAT;
+                if (!track.source || track.openedPath != path || track.openedLoop != request.loop)
+                {
+                    auto replacement = std::make_unique<BackgroundVideo>();
+                    auto openResult = replacement->Open(path, request.loop);
+                    if (FAILED(openResult))
+                    {
+                        track.source.reset();
+                        track.openedPath.clear();
+                        track.failedPath = path;
+                        track.failedLoop = request.loop;
+                        return openResult;
+                    }
+                    track.source = std::move(replacement);
+                    track.openedPath = path;
+                    track.failedPath.clear();
+                    track.openedLoop = request.loop;
+                }
                 std::scoped_lock decodeLock(PreviewDecodeMutex);
-                if (!PreviewVideoSuspended.load(std::memory_order_acquire)) updateResult = source->Update(request.seconds);
-            }
-            PreviewVideoResult.store(updateResult, std::memory_order_relaxed);
+                if (PreviewVideoSuspended.load(std::memory_order_acquire)) return S_OK;
+                return track.source->Update(seconds, isSecondary);
+            };
+
+            const auto primaryResult = updateTrack(request.primaryPath, request.primarySeconds, primary, false);
+            const auto secondaryResult = updateTrack(request.secondaryPath, request.secondarySeconds, secondary, true);
+            PreviewVideoResult.store(FAILED(primaryResult) ? primaryResult : secondaryResult, std::memory_order_relaxed);
             processedVersion = request.version;
         }
 
-        source.reset();
+        primary.source.reset();
+        secondary.source.reset();
         MFShutdown();
         if (uninitializeCom) CoUninitialize();
         PreviewVideoWorkerRunning.store(false, std::memory_order_release);
@@ -598,7 +892,7 @@ namespace
             return std::max<LONG>(fontSize, measured.bottom - measured.top);
         }
 
-        void Composite(unsigned char* bgra, RECT area, float opacity, COLORREF color, bool shadow)
+        void Composite(unsigned char* bgra, RECT area, float opacity, COLORREF color, float glow)
         {
             if (!bgra || opacity <= 0 || area.right <= area.left || area.bottom <= area.top) return;
             opacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -612,7 +906,7 @@ namespace
                 pixel[2] = static_cast<unsigned char>((pixel[2] * inverse + red * alpha + 127) / 255);
             };
 
-            const LONG pad = shadow ? 3 : 0;
+            glow = std::clamp(glow, 0.0f, 1.0f);
             for (LONG y = area.top; y < area.bottom; ++y)
             {
                 for (LONG x = area.left; x < area.right; ++x)
@@ -620,7 +914,14 @@ namespace
                     const auto mask = static_cast<unsigned char>((pixels[static_cast<size_t>(y) * width + x] >> 16) & 0xff);
                     if (mask == 0) continue;
                     const auto alpha = static_cast<unsigned char>(std::clamp(static_cast<int>(std::lround(mask * opacity)), 0, 255));
-                    if (shadow) blend(x + 1, y + pad, static_cast<unsigned char>(alpha * 0.58f), 0, 0, 0);
+                    if (glow > 0.001f)
+                    {
+                        const auto glowAlpha = static_cast<unsigned char>(alpha * glow * 0.20f);
+                        blend(x - 1, y, glowAlpha, GetBValue(color), GetGValue(color), GetRValue(color));
+                        blend(x + 1, y, glowAlpha, GetBValue(color), GetGValue(color), GetRValue(color));
+                        blend(x, y - 1, glowAlpha, GetBValue(color), GetGValue(color), GetRValue(color));
+                        blend(x, y + 1, glowAlpha, GetBValue(color), GetGValue(color), GetRValue(color));
+                    }
                     blend(x, y, alpha, GetBValue(color), GetGValue(color), GetRValue(color));
                 }
             }
@@ -663,13 +964,16 @@ namespace
         const float scale = landscape ? request.width / 640.0f : square ? request.width / 580.0f : request.height / 640.0f;
         const float textMargin = landscape ? 0.258f : square ? 0.233f : 0.07f;
         const auto marginX = static_cast<LONG>(request.width * textMargin);
-        const LONG textWidth = static_cast<LONG>(request.width) - marginX * 2;
+        const auto lyricWidth = static_cast<LONG>(request.width * std::clamp(request.lyricWidth, 0.45f, 0.96f));
+        const auto lyricMarginX = static_cast<LONG>((request.width - lyricWidth) / 2);
+        const LONG textWidth = lyricWidth;
         const int cueIndex = CurrentCueIndex(cues, seconds);
 
-        if (!request.title.empty() && seconds < request.introDuration && request.introDuration > 0)
+        if (request.introEnabled && !request.title.empty() && seconds < request.introDuration && request.introDuration > 0)
         {
-            const float fadeIn = Ease(static_cast<float>(seconds / 0.8));
-            const float fadeOut = Ease(static_cast<float>((request.introDuration - seconds) / 0.9));
+            const float fadeDuration = std::clamp(request.introAnimationDuration, 0.2f, 3.0f);
+            const float fadeIn = Ease(static_cast<float>(seconds / fadeDuration));
+            const float fadeOut = Ease(static_cast<float>((request.introDuration - seconds) / fadeDuration));
             const float opacity = std::min(fadeIn, fadeOut);
             if (opacity > 0)
             {
@@ -679,9 +983,9 @@ namespace
                 const LONG left = landscape ? static_cast<LONG>(request.width * 0.06) : marginX;
                 const UINT alignment = landscape ? DT_LEFT : DT_CENTER;
                 const auto titleDimension = landscape ? request.width : request.height;
-                const auto titleSize = std::max(1, static_cast<int>(titleDimension * 0.053f * introScale));
-                const auto authorSize = std::max(1, static_cast<int>(titleDimension * 0.024f * introScale));
-                const auto dateSize = std::max(1, static_cast<int>(titleDimension * 0.017f));
+                const auto titleSize = std::max(1, static_cast<int>(std::lround(request.introTitleSize * introScale)));
+                const auto authorSize = std::max(1, static_cast<int>(std::lround(titleSize * 0.46f)));
+                const auto dateSize = std::max(1, static_cast<int>(std::lround(titleSize * 0.30f)));
                 LONG cursor = top;
                 RECT titleRect{ left, cursor, static_cast<LONG>(request.width) - left, cursor + titleSize * 2 + 20 };
                 auto area = surface.DrawMask(request.title, request.fontFamily, titleSize, FW_SEMIBOLD, titleRect, alignment | DT_VCENTER);
@@ -710,8 +1014,8 @@ namespace
             {
                 const auto& cue = cues[static_cast<size_t>(cueIndex)];
                 const auto fontSize = std::max(1, static_cast<int>(std::lround(request.articleFontSize * scale)));
-                RECT rectangle{ marginX, static_cast<LONG>(request.height * 0.18),
-                    static_cast<LONG>(request.width) - marginX, static_cast<LONG>(request.height * 0.82) };
+                RECT rectangle{ lyricMarginX, static_cast<LONG>(request.height * 0.18),
+                    lyricMarginX + lyricWidth, static_cast<LONG>(request.height * 0.82) };
                 const auto area = surface.DrawMask(cue.text, request.fontFamily, fontSize, FW_NORMAL, rectangle, DT_CENTER | DT_VCENTER);
                 const auto fade = Ease(static_cast<float>((seconds - cue.start) / 0.35));
                 surface.Composite(frame, area, 0.94f * std::max(0.15f, fade), RGB(250, 248, 244), true);
@@ -725,7 +1029,8 @@ namespace
             const int firstOffset = window == 5 ? -2 : -1;
             const int lastOffset = window == 5 ? 2 : 1;
             const float elapsed = static_cast<float>(seconds - cues[static_cast<size_t>(cueIndex)].start);
-            const float transition = Ease(elapsed / 0.48f);
+            const float transition = request.lyricAnimation == 5 ? 1.0f
+                : Ease(elapsed / std::max(0.18f, request.lyricAnimationDuration));
             struct LyricRow
             {
                 int cue = 0;
@@ -735,7 +1040,7 @@ namespace
             };
             std::vector<LyricRow> rows;
             float blockHeight = 0;
-            float rowGap = request.lyricFontSize * scale * 0.12f;
+            float rowGap = request.lyricFontSize * scale * std::clamp(request.lyricLineSpacing - 1.0f, 0.10f, 1.50f) * 0.18f;
             for (int offset = firstOffset; offset <= lastOffset; ++offset)
             {
                 const auto index = cueIndex + offset;
@@ -769,18 +1074,20 @@ namespace
             {
                 const auto offset = row.offset;
                 float offsetY = 0;
-                float opacity = offset == 0 ? 0.22f + transition * 0.78f : (std::abs(offset) == 1 ? 0.56f : 0.32f);
+                const float inactive = std::clamp(request.lyricInactiveOpacity, 0.08f, 0.72f);
+                float opacity = offset == 0 ? (request.lyricAnimation == 5 ? 1.0f : 0.22f + transition * 0.78f) : (std::abs(offset) == 1 ? std::max(inactive, 0.66f) : std::max(inactive * 0.88f, 0.42f));
                 if (offset == 0 && request.lyricAnimation == 0) offsetY = (1.0f - transition) * 16.0f * scale;
                 if (offset == 0 && request.lyricAnimation == 1) opacity = transition;
                 if (offset == 0 && request.lyricAnimation == 3) opacity = transition;
-                RECT rectangle{ marginX, static_cast<LONG>(cursorY + offsetY),
-                    static_cast<LONG>(request.width) - marginX, static_cast<LONG>(cursorY + offsetY + row.height) };
+                const UINT alignment = request.lyricAlignment == 0 ? DT_LEFT : request.lyricAlignment == 2 ? DT_RIGHT : DT_CENTER;
+                RECT rectangle{ lyricMarginX, static_cast<LONG>(cursorY + offsetY),
+                    lyricMarginX + lyricWidth, static_cast<LONG>(cursorY + offsetY + row.height) };
                 const auto area = surface.DrawMask(cues[static_cast<size_t>(row.cue)].text, request.fontFamily, row.fontSize,
-                    offset == 0 ? FW_SEMIBOLD : FW_NORMAL, rectangle, DT_CENTER | DT_VCENTER);
+                    offset == 0 ? FW_SEMIBOLD : FW_NORMAL, rectangle, alignment | DT_VCENTER);
                 const auto color = offset == 0 && request.lyricAnimation == 4
                     ? RGB(static_cast<BYTE>(197 + 58 * transition), static_cast<BYTE>(176 + 79 * transition), 255)
                     : RGB(255, 255, 255);
-                surface.Composite(frame, area, opacity, color, true);
+                surface.Composite(frame, area, opacity, color, request.lyricGlow);
                 cursorY += row.height + rowGap;
             }
         }
@@ -805,9 +1112,110 @@ namespace
         return S_OK;
     }
 
+    HRESULT ReadBackgroundAudioPcm(const std::wstring& path, std::vector<std::int16_t>& samples,
+        size_t maximumBytes = 256ull * 1024 * 1024, float progressBase = 0, float progressSpan = 0)
+    {
+        ComPtr<IMFSourceReader> reader;
+        auto result = CreateAudioReader(path, reader);
+        if (FAILED(result)) return S_OK; // A background video without an audio stream is valid.
+        double duration = 0;
+        ReadDuration(reader.Get(), duration);
+
+        for (;;)
+        {
+            if (ExportCancelled.load(std::memory_order_relaxed)) return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+            DWORD stream = 0;
+            DWORD flags = 0;
+            LONGLONG sampleTime = 0;
+            ComPtr<IMFSample> sample;
+            result = reader->ReadSample(MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0, &stream, &flags, &sampleTime, sample.GetAddressOf());
+            if (FAILED(result)) return result;
+            if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0) break;
+            if (!sample) continue;
+
+            ComPtr<IMFMediaBuffer> buffer;
+            result = sample->ConvertToContiguousBuffer(buffer.GetAddressOf());
+            if (FAILED(result)) return result;
+            BYTE* data = nullptr;
+            DWORD maximum = 0;
+            DWORD length = 0;
+            result = buffer->Lock(&data, &maximum, &length);
+            if (FAILED(result)) return result;
+            if (samples.size() * sizeof(std::int16_t) + length > maximumBytes)
+            {
+                buffer->Unlock();
+                return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+            }
+            const auto oldSize = samples.size();
+            samples.resize(oldSize + length / sizeof(std::int16_t));
+            std::memcpy(samples.data() + oldSize, data, length - (length % sizeof(std::int16_t)));
+            buffer->Unlock();
+            if (progressSpan > 0 && duration > 0)
+                ExportProgress.store(std::clamp(progressBase + progressSpan * static_cast<float>(sampleTime /
+                    static_cast<double>(TicksPerSecond) / duration), progressBase, progressBase + progressSpan),
+                    std::memory_order_relaxed);
+        }
+        return S_OK;
+    }
+
+    HRESULT MixBackgroundAudio(IMFSample* sample, LONGLONG outputTime,
+        const std::vector<std::vector<std::int16_t>>& backgrounds,
+        const std::vector<BackgroundMediaDescriptor>& media, const ExportRequest& request,
+        double singleVideoDuration)
+    {
+        if (!sample || !request.backgroundAudioEnabled || request.backgroundAudioVolume <= 0) return S_OK;
+        ComPtr<IMFMediaBuffer> buffer;
+        auto result = sample->ConvertToContiguousBuffer(buffer.GetAddressOf());
+        if (FAILED(result)) return result;
+        BYTE* data = nullptr;
+        DWORD maximum = 0;
+        DWORD length = 0;
+        result = buffer->Lock(&data, &maximum, &length);
+        if (FAILED(result)) return result;
+        const auto primaryFrames = length / (AudioChannels * sizeof(std::int16_t));
+        const auto firstFrame = static_cast<std::uint64_t>(std::max<LONGLONG>(0, outputTime)) * AudioSampleRate / TicksPerSecond;
+        auto* primary = reinterpret_cast<std::int16_t*>(data);
+        for (size_t frame = 0; frame < primaryFrames; ++frame)
+        {
+            const double seconds = static_cast<double>(firstFrame + frame) / AudioSampleRate;
+            const auto state = BackgroundStateAt(seconds, request.outputDuration, media,
+                request.backgroundTransition, request.backgroundTransitionDuration, singleVideoDuration);
+            auto addClip = [&](size_t index, double localTime, float gain)
+            {
+                if (index >= backgrounds.size() || gain <= 0.0001f) return;
+                const auto& pcm = backgrounds[index];
+                const auto frames = pcm.size() / AudioChannels;
+                if (frames == 0) return;
+                auto sourceFrame = static_cast<std::uint64_t>(std::max(0.0, localTime) * AudioSampleRate);
+                sourceFrame = request.loopBackgroundVideo ? sourceFrame % frames : std::min<std::uint64_t>(sourceFrame, frames - 1);
+                for (size_t channel = 0; channel < AudioChannels; ++channel)
+                {
+                    const auto mixed = static_cast<float>(primary[frame * AudioChannels + channel]) +
+                        static_cast<float>(pcm[sourceFrame * AudioChannels + channel]) * request.backgroundAudioVolume * gain;
+                    primary[frame * AudioChannels + channel] = static_cast<std::int16_t>(std::clamp(
+                        static_cast<int>(std::lround(mixed)), -32768, 32767));
+                }
+            };
+            const float progress = state.nextIndex ? state.transitionProgress : 0.0f;
+            double outgoingLocalTime = state.currentLocalTime;
+            if (state.nextIndex && *state.nextIndex != state.currentIndex && media.size() > 1)
+            {
+                const auto blend = std::min(std::max(0.05, request.backgroundTransitionDuration), state.segmentDuration * 0.45);
+                outgoingLocalTime = std::max(0.0, state.segmentDuration - blend + progress * blend);
+            }
+            addClip(state.currentIndex, outgoingLocalTime, 1.0f - progress);
+            if (state.nextIndex) addClip(*state.nextIndex, state.nextLocalTime, progress);
+        }
+        buffer->Unlock();
+        return S_OK;
+    }
+
     HRESULT WriteAudioUntil(IMFSinkWriter* writer, DWORD audioIndex, IMFSourceReader* reader,
         ComPtr<IMFSample>& pending, LONGLONG& pendingTime, LONGLONG& pendingDuration, LONGLONG& loopOffset,
-        double audioDuration, double outputDuration, LONGLONG throughTime, bool loopAudio)
+        double audioDuration, double outputDuration, LONGLONG throughTime, bool loopAudio,
+        const std::vector<std::vector<std::int16_t>>& backgroundPcm,
+        const std::vector<BackgroundMediaDescriptor>& backgrounds, const ExportRequest& request,
+        double singleVideoDuration)
     {
         for (;;)
         {
@@ -829,6 +1237,9 @@ namespace
 
             const auto outputTime = pendingTime + loopOffset;
             if (outputTime >= throughTime) return S_OK;
+            auto mixResult = MixBackgroundAudio(pending.Get(), outputTime, backgroundPcm,
+                backgrounds, request, singleVideoDuration);
+            if (FAILED(mixResult)) return mixResult;
             auto result = pending->SetSampleTime(outputTime);
             if (FAILED(result)) return result;
             result = pending->SetSampleDuration(pendingDuration);
@@ -885,13 +1296,42 @@ namespace
             ReadDuration(audioReader.Get(), readerAudioDuration);
             if (readerAudioDuration > 0) measuredAudioDuration = readerAudioDuration;
             ExportStage.store(2, std::memory_order_relaxed);
+            ExportProgress.store(0, std::memory_order_relaxed);
 
-            BackgroundVideo background;
-            if (!request.backgroundVideoPath.empty())
+            const auto backgrounds = ParseBackgroundManifest(request.backgroundManifest);
+            if (backgrounds.empty())
             {
-                result = background.Open(request.backgroundVideoPath, request.loopBackgroundVideo);
-                if (FAILED(result)) goto cleanup;
+                result = E_INVALIDARG;
+                goto cleanup;
             }
+            auto currentBackground = std::make_unique<BackgroundSource>();
+            result = currentBackground->Open(0, backgrounds[0], request.loopBackgroundVideo);
+            if (FAILED(result)) goto cleanup;
+            std::unique_ptr<BackgroundSource> nextBackground;
+            const double singleVideoDuration = backgrounds.size() == 1 && request.loopBackgroundVideo
+                ? currentBackground->duration() : 0;
+            std::vector<std::vector<std::int16_t>> backgroundAudioPcm(backgrounds.size());
+            if (request.backgroundAudioEnabled)
+            {
+                ExportStage.store(2, std::memory_order_relaxed);
+                size_t audioMemoryUsed = 0;
+                constexpr size_t MaximumBackgroundAudioBytes = 256ull * 1024 * 1024;
+                const auto videoAudioCount = static_cast<float>(std::count_if(backgrounds.begin(), backgrounds.end(),
+                    [](const auto& item) { return item.video; }));
+                size_t videoAudioIndex = 0;
+                for (size_t index = 0; index < backgrounds.size(); ++index)
+                {
+                    if (!backgrounds[index].video) continue;
+                    result = ReadBackgroundAudioPcm(backgrounds[index].path, backgroundAudioPcm[index],
+                        MaximumBackgroundAudioBytes - audioMemoryUsed,
+                        videoAudioCount > 0 ? static_cast<float>(videoAudioIndex) / videoAudioCount : 0,
+                        videoAudioCount > 0 ? 1.0f / videoAudioCount : 0);
+                    if (FAILED(result)) goto cleanup;
+                    audioMemoryUsed += backgroundAudioPcm[index].size() * sizeof(std::int16_t);
+                    ++videoAudioIndex;
+                }
+            }
+            ExportProgress.store(1, std::memory_order_relaxed);
 
             ComPtr<IMFSinkWriter> writer;
             DWORD videoIndex = 0;
@@ -929,6 +1369,9 @@ namespace
             LONGLONG pendingAudioDuration = 0;
             LONGLONG audioLoopOffset = 0;
             std::vector<unsigned char> pixels(frameBytes);
+            std::array<float, AudioBandCount> smoothedBands{};
+            ExportStage.store(3, std::memory_order_relaxed);
+            ExportProgress.store(0, std::memory_order_relaxed);
 
             for (std::uint64_t frame = 0; frame < frameCount; ++frame)
             {
@@ -939,17 +1382,74 @@ namespace
                 }
                 const auto time = frame / static_cast<double>(VideoFps);
                 const auto frameTime = static_cast<LONGLONG>(frame) * frameDuration;
-                if (background.duration > 0 || !request.backgroundVideoPath.empty())
+                const auto backgroundState = BackgroundStateAt(time, request.outputDuration, backgrounds,
+                    request.backgroundTransition, request.backgroundTransitionDuration,
+                    request.loopBackgroundVideo ? singleVideoDuration : 0);
+                if (currentBackground->index != backgroundState.currentIndex)
                 {
-                    result = background.Update(time);
+                    if (nextBackground && nextBackground->index == backgroundState.currentIndex &&
+                        backgroundState.nextIndex != backgroundState.currentIndex)
+                        std::swap(currentBackground, nextBackground);
+                    else
+                    {
+                        currentBackground = std::make_unique<BackgroundSource>();
+                        result = currentBackground->Open(backgroundState.currentIndex, backgrounds[backgroundState.currentIndex], request.loopBackgroundVideo);
+                        if (FAILED(result)) break;
+                    }
+                }
+                if (backgroundState.nextIndex)
+                {
+                    if (!nextBackground || nextBackground->index != *backgroundState.nextIndex ||
+                        (backgroundState.nextIndex == backgroundState.currentIndex && nextBackground == currentBackground))
+                    {
+                        nextBackground = std::make_unique<BackgroundSource>();
+                        result = nextBackground->Open(*backgroundState.nextIndex, backgrounds[*backgroundState.nextIndex], request.loopBackgroundVideo);
+                        if (FAILED(result)) break;
+                    }
+                }
+                else nextBackground.reset();
+
+                result = currentBackground->Update(backgroundState.currentLocalTime, false);
+                if (FAILED(result)) break;
+                if (backgroundState.nextIndex)
+                {
+                    result = nextBackground->Update(backgroundState.nextLocalTime, true);
                     if (FAILED(result)) break;
                 }
+                result = SikaMTV_SetBackgroundMotionTimeline(
+                    static_cast<float>(std::clamp(backgroundState.currentLocalTime / std::max(0.001, backgroundState.segmentDuration), 0.0, 1.0)),
+                    backgrounds[backgroundState.currentIndex].video ? 0.16f : 1.0f,
+                    static_cast<float>(std::clamp(backgroundState.nextLocalTime / std::max(0.001, backgroundState.segmentDuration), 0.0, 1.0)),
+                    backgroundState.nextIndex
+                        ? (backgrounds[*backgroundState.nextIndex].video ? 0.16f : 1.0f)
+                        : 0.0f);
+                if (FAILED(result)) break;
+                result = SikaMTV_SetBackgroundTransition(backgroundState.transitionProgress, backgroundState.transitionKind);
+                if (FAILED(result)) break;
+                const auto& paletteA = backgrounds[backgroundState.currentIndex];
+                const auto& paletteB = backgroundState.nextIndex ? backgrounds[*backgroundState.nextIndex] : paletteA;
+                const float paletteMix = backgroundState.nextIndex ? backgroundState.transitionProgress : 0.0f;
+                result = SikaMTV_SetScenePalette(
+                    std::lerp(paletteA.primary[0], paletteB.primary[0], paletteMix),
+                    std::lerp(paletteA.primary[1], paletteB.primary[1], paletteMix),
+                    std::lerp(paletteA.primary[2], paletteB.primary[2], paletteMix),
+                    std::lerp(paletteA.secondary[0], paletteB.secondary[0], paletteMix),
+                    std::lerp(paletteA.secondary[1], paletteB.secondary[1], paletteMix),
+                    std::lerp(paletteA.secondary[2], paletteB.secondary[2], paletteMix));
+                if (FAILED(result)) break;
 
                 const auto audioFrame = static_cast<size_t>(frame) % static_cast<size_t>(analysisFrames);
-                const auto* bands = analysis.data() + audioFrame * AudioBandCount;
+                const auto* rawBands = analysis.data() + audioFrame * AudioBandCount;
+                const float attack = 0.82f - request.visualizerSmoothing * 0.44f;
+                const float release = 0.50f - request.visualizerSmoothing * 0.38f;
+                for (size_t band = 0; band < smoothedBands.size(); ++band)
+                {
+                    const auto coefficient = rawBands[band] > smoothedBands[band] ? attack : release;
+                    smoothedBands[band] += (rawBands[band] - smoothedBands[band]) * coefficient;
+                }
                 result = SikaMTV_RenderExportFrame(request.width, request.height, static_cast<float>(time), request.visualizerKind,
                     request.intensity, request.blur, request.vignette, request.saturation, request.slowZoom,
-                    request.visualizerScale, request.rainbow, bands, AudioBandCount, pixels.data(), static_cast<int>(pixels.size()));
+                    request.visualizerScale, request.rainbow, smoothedBands.data(), AudioBandCount, pixels.data(), static_cast<int>(pixels.size()));
                 if (FAILED(static_cast<HRESULT>(result))) break;
                 CompositeText(request, cues, time, textSurface, pixels.data());
 
@@ -977,7 +1477,9 @@ namespace
 
                 result = WriteAudioUntil(writer.Get(), audioIndex, audioReader.Get(), pendingAudio,
                     pendingAudioTime, pendingAudioDuration, audioLoopOffset, measuredAudioDuration,
-                    request.outputDuration, frameTime + frameDuration, request.articleMode);
+                    request.outputDuration, frameTime + frameDuration, request.articleMode,
+                    backgroundAudioPcm, backgrounds, request,
+                    request.loopBackgroundVideo ? singleVideoDuration : 0);
                 if (FAILED(result)) break;
                 result = writer->WriteSample(videoIndex, videoSample.Get());
                 if (FAILED(result)) break;
@@ -1022,12 +1524,17 @@ cleanup:
     }
 }
 
-int __cdecl SikaMTV_StartVideoExport(const wchar_t* backgroundVideoPath, const wchar_t* audioPath, const wchar_t* outputPath,
+int __cdecl SikaMTV_StartVideoExport(const wchar_t* backgroundManifest, const wchar_t* audioPath, const wchar_t* outputPath,
     const wchar_t* textTimeline, const wchar_t* title, const wchar_t* author, const wchar_t* date, const wchar_t* fontFamily,
     double audioDurationSeconds, double outputDurationSeconds, unsigned int width, unsigned int height, unsigned int visualizerKind,
     float intensity, float blur, float vignette, float saturation, float slowZoom, float visualizerScale, float rainbow,
-    float lyricFontSize, float lyricPosition, int lyricWindowCount, int lyricAnimation, int articleMode,
-    float articleFontSize, float articleLineSpacing, float introDuration, int showIntroDate, int introAnimation, int loopBackgroundVideo)
+    float visualizerSmoothing,
+    float lyricFontSize, float lyricPosition, float lyricWidth, float lyricLineSpacing, float lyricInactiveOpacity,
+    float lyricGlow, float lyricAnimationDuration, int lyricAlignment, int lyricWindowCount, int lyricAnimation, int articleMode,
+    float articleFontSize, float articleLineSpacing, float introDuration, float introTitleSize, float introAnimationDuration,
+    int introEnabled, int showIntroDate, int introAnimation,
+    int loopBackgroundVideo, int backgroundTransition, float backgroundTransitionDuration,
+    int backgroundAudioEnabled, float backgroundAudioVolume)
 {
     if (audioPath == nullptr || audioPath[0] == L'\0' || outputPath == nullptr || outputPath[0] == L'\0') return E_INVALIDARG;
     if (ExportRunning.exchange(true, std::memory_order_acq_rel)) return HRESULT_FROM_WIN32(ERROR_BUSY);
@@ -1036,7 +1543,7 @@ int __cdecl SikaMTV_StartVideoExport(const wchar_t* backgroundVideoPath, const w
     try
     {
         ExportRequest request;
-        request.backgroundVideoPath = SafeString(backgroundVideoPath);
+        request.backgroundManifest = SafeString(backgroundManifest);
         request.audioPath = SafeString(audioPath);
         request.outputPath = SafeString(outputPath);
         request.textTimeline = SafeString(textTimeline);
@@ -1056,17 +1563,31 @@ int __cdecl SikaMTV_StartVideoExport(const wchar_t* backgroundVideoPath, const w
         request.slowZoom = slowZoom;
         request.visualizerScale = visualizerScale;
         request.rainbow = rainbow;
+        request.visualizerSmoothing = std::clamp(visualizerSmoothing, 0.0f, 1.0f);
         request.lyricFontSize = lyricFontSize;
         request.lyricPosition = lyricPosition;
+        request.lyricWidth = lyricWidth;
+        request.lyricLineSpacing = lyricLineSpacing;
+        request.lyricInactiveOpacity = lyricInactiveOpacity;
+        request.lyricGlow = lyricGlow;
+        request.lyricAnimationDuration = lyricAnimationDuration;
+        request.lyricAlignment = lyricAlignment;
         request.lyricWindowCount = lyricWindowCount;
         request.lyricAnimation = lyricAnimation;
         request.articleMode = articleMode != 0;
         request.articleFontSize = articleFontSize;
         request.articleLineSpacing = articleLineSpacing;
         request.introDuration = introDuration;
+        request.introTitleSize = std::clamp(introTitleSize, 36.0f, 96.0f);
+        request.introAnimationDuration = std::clamp(introAnimationDuration, 0.2f, 3.0f);
+        request.introEnabled = introEnabled != 0;
         request.showIntroDate = showIntroDate != 0;
         request.introAnimation = introAnimation;
         request.loopBackgroundVideo = loopBackgroundVideo != 0;
+        request.backgroundTransition = std::clamp(backgroundTransition, 0, 3);
+        request.backgroundTransitionDuration = std::clamp(backgroundTransitionDuration, 0.2f, 2.5f);
+        request.backgroundAudioEnabled = backgroundAudioEnabled != 0;
+        request.backgroundAudioVolume = std::clamp(backgroundAudioVolume, 0.0f, 1.0f);
 
         ExportCancelled.store(false, std::memory_order_relaxed);
         SikaMTV_SetAudioAnalysisCancelled(0);
@@ -1089,23 +1610,38 @@ int __cdecl SikaMTV_StartVideoExport(const wchar_t* backgroundVideoPath, const w
 
 int __cdecl SikaMTV_UpdatePreviewBackgroundVideo(const wchar_t* path, double timeSeconds, int loop)
 {
+    return SikaMTV_UpdatePreviewBackgroundCarousel(path, timeSeconds, L"", 0, loop, 0, 0);
+}
+
+int __cdecl SikaMTV_UpdatePreviewBackgroundCarousel(const wchar_t* primaryVideoPath, double primaryTime,
+    const wchar_t* secondaryVideoPath, double secondaryTime, int loop, float transitionProgress, int transitionKind)
+{
     try
     {
-        const auto requestedPath = SafeString(path);
+        const auto requestedPrimary = SafeString(primaryVideoPath);
+        const auto requestedSecondary = SafeString(secondaryVideoPath);
+        const auto requestedLoop = loop != 0;
+        const auto safePrimaryTime = std::max(0.0, primaryTime);
+        const auto safeSecondaryTime = std::max(0.0, secondaryTime);
+        const auto transitionResult = SikaMTV_SetBackgroundTransition(transitionProgress, transitionKind);
+        if (FAILED(static_cast<HRESULT>(transitionResult))) return transitionResult;
         bool startWorker = false;
         {
             std::scoped_lock lock(PreviewRequestMutex);
-            const bool sourceChanged = requestedPath != PreviewRequestedPath || PreviewRequestedLoop != (loop != 0);
-            if (sourceChanged ||
-                std::abs(PreviewRequestedSeconds - timeSeconds) >= 0.012)
+            const bool sourceChanged = requestedPrimary != PreviewRequestedPrimaryPath ||
+                requestedSecondary != PreviewRequestedSecondaryPath || PreviewRequestedLoop != requestedLoop;
+            if (sourceChanged || std::abs(PreviewRequestedPrimarySeconds - safePrimaryTime) >= 0.012 ||
+                std::abs(PreviewRequestedSecondarySeconds - safeSecondaryTime) >= 0.012)
             {
-                PreviewRequestedPath = requestedPath;
-                PreviewRequestedSeconds = std::max(0.0, timeSeconds);
-                PreviewRequestedLoop = loop != 0;
+                PreviewRequestedPrimaryPath = requestedPrimary;
+                PreviewRequestedPrimarySeconds = safePrimaryTime;
+                PreviewRequestedSecondaryPath = requestedSecondary;
+                PreviewRequestedSecondarySeconds = safeSecondaryTime;
+                PreviewRequestedLoop = requestedLoop;
                 ++PreviewRequestVersion;
             }
             if (sourceChanged) PreviewVideoResult.store(S_OK, std::memory_order_relaxed);
-            startWorker = !requestedPath.empty() && (!PreviewVideoThread.joinable() ||
+            startWorker = (!requestedPrimary.empty() || !requestedSecondary.empty()) && (!PreviewVideoThread.joinable() ||
                 (!PreviewVideoWorkerRunning.load(std::memory_order_acquire) && sourceChanged));
         }
 
@@ -1136,8 +1672,10 @@ void __cdecl SikaMTV_StopPreviewBackgroundVideo()
     }
     PreviewVideoWorkerRunning.store(false, std::memory_order_release);
     std::scoped_lock lock(PreviewRequestMutex);
-    PreviewRequestedPath.clear();
-    PreviewRequestedSeconds = 0;
+    PreviewRequestedPrimaryPath.clear();
+    PreviewRequestedPrimarySeconds = 0;
+    PreviewRequestedSecondaryPath.clear();
+    PreviewRequestedSecondarySeconds = 0;
     ++PreviewRequestVersion;
     PreviewVideoResult.store(S_OK, std::memory_order_relaxed);
 }
@@ -1149,7 +1687,8 @@ void __cdecl SikaMTV_GetVideoExportProgress(float* progress, int* isRunning, int
         const auto stage = ExportStage.load(std::memory_order_relaxed);
         const auto value = stage == 1
             ? SikaMTV_GetAudioAnalysisProgress() * 0.08f
-            : stage == 2 ? 0.08f + ExportProgress.load(std::memory_order_relaxed) * 0.92f
+            : stage == 2 ? 0.08f + ExportProgress.load(std::memory_order_relaxed) * 0.05f
+            : stage == 3 ? 0.13f + ExportProgress.load(std::memory_order_relaxed) * 0.87f
                          : ExportProgress.load(std::memory_order_relaxed);
         *progress = value;
     }

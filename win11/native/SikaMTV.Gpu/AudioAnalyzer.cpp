@@ -36,6 +36,7 @@ namespace
     double DesiredPosition = 0;
     bool IsPlaying = false;
     std::array<float, BandTotal> PublishedBands{};
+    std::atomic<float> AudioSmoothing{ 0.72f };
     std::atomic<float> AnalysisProgress{ 0 };
     std::atomic<bool> AnalysisCancelled{ false };
     std::jthread Worker;
@@ -213,10 +214,13 @@ namespace
             ComputeBands(ring, bands);
             {
                 std::scoped_lock lock(StateMutex);
+                const auto smoothing = AudioSmoothing.load(std::memory_order_relaxed);
+                const auto attack = 0.82f - smoothing * 0.44f;
+                const auto release = 0.50f - smoothing * 0.38f;
                 for (UINT index = 0; index < BandTotal; ++index)
                 {
-                    const auto attack = bands[index] > PublishedBands[index] ? 0.56f : 0.20f;
-                    PublishedBands[index] += (bands[index] - PublishedBands[index]) * attack;
+                    const auto coefficient = bands[index] > PublishedBands[index] ? attack : release;
+                    PublishedBands[index] += (bands[index] - PublishedBands[index]) * coefficient;
                 }
             }
 
@@ -260,6 +264,12 @@ void __cdecl SikaMTV_SetAudioPlaybackState(double positionSeconds, int isPlaying
         IsPlaying = isPlaying != 0;
     }
     StateChanged.notify_all();
+}
+
+void __cdecl SikaMTV_SetAudioSmoothing(float amount)
+{
+    if (!std::isfinite(amount)) return;
+    AudioSmoothing.store(std::clamp(amount, 0.0f, 1.0f), std::memory_order_relaxed);
 }
 
 void __cdecl SikaMTV_CopyAudioBands(float* bands, int capacity)

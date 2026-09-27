@@ -142,7 +142,7 @@
                         <TextBlock x:Name="Next2LyricText" FontSize="12" Opacity="0.32" TextAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
                     <StackPanel x:Name="IntroOverlay" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="18,70,18,0" Spacing="10" MaxWidth="320" IsHitTestVisible="False" Visibility="Collapsed">
-                        <TextBlock x:Name="IntroTitleText" Text="" FontSize="34" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
+                        <TextBlock x:Name="IntroTitleText" Text="" FontSize="24" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
                         <Rectangle Height="1" Width="58" Fill="{StaticResource SikaAccent}" HorizontalAlignment="Center" Opacity="0.8" />
                         <TextBlock x:Name="IntroAuthorText" Text="鹿鸣松(Lumisum)" FontSize="15" TextAlignment="Center" />
                         <TextBlock x:Name="IntroDateText" FontSize="11" Foreground="{StaticResource SikaMuted}" TextAlignment="Center" />
@@ -176,14 +176,52 @@
                             <StackPanel Spacing="14">
                                 <TextBlock Text="背景质感" FontSize="16" FontWeight="SemiBold" />
                                 <TextBlock Text="模糊" FontSize="11" />
-                                <Slider x:Name="BlurSlider" Minimum="0" Maximum="1" Value="0.18" />
+                                <Slider x:Name="BlurSlider" Minimum="0" Maximum="1" Value="0.18" ValueChanged="VisualSettings_ValueChanged" />
                                 <TextBlock Text="边缘暗化" FontSize="11" />
-                                <Slider x:Name="VignetteSlider" Minimum="0" Maximum="1" Value="0.24" />
+                                <Slider x:Name="VignetteSlider" Minimum="0" Maximum="1" Value="0.24" ValueChanged="VisualSettings_ValueChanged" />
                                 <TextBlock Text="色彩饱和度" FontSize="11" />
-                                <Slider x:Name="SaturationSlider" Minimum="0" Maximum="2" Value="1" />
-                                <ToggleSwitch x:Name="SlowZoomToggle" Header="静态图片缓慢缩放" IsOn="True" />
+                                <Slider x:Name="SaturationSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="四角柔和暗化" FontSize="11" />
+                                <Slider x:Name="BackgroundDarknessSlider" Minimum="0" Maximum="1" Value="0.20" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="背景遮罩颜色 · RGB" FontSize="11" />
+                                <Slider x:Name="OverlayRedSlider" Minimum="0" Maximum="1" Value="1" ValueChanged="VisualSettings_ValueChanged" />
+                                <Slider x:Name="OverlayGreenSlider" Minimum="0" Maximum="1" Value="1" ValueChanged="VisualSettings_ValueChanged" />
+                                <Slider x:Name="OverlayBlueSlider" Minimum="0" Maximum="1" Value="1" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="遮罩透明度（默认透明）" FontSize="11" />
+                                <Slider x:Name="OverlayOpacitySlider" Minimum="0" Maximum="1" Value="0" ValueChanged="VisualSettings_ValueChanged" />
+                                <ToggleSwitch x:Name="SlowZoomToggle" Header="静态图片缓慢缩放" IsOn="True" Toggled="VisualSettings_Toggled" />
+                                <ToggleSwitch x:Name="SmartBlurToggle" Header="智能主体清晰保护" IsOn="True" Toggled="VisualSettings_Toggled" />
+                                <TextBlock Text="背景生命模式" FontSize="11" />
+                                <ComboBox x:Name="BackgroundMotionStyleBox" SelectedIndex="0" SelectionChanged="VisualSettings_SelectionChanged">
+                                    <ComboBoxItem Content="自然" /><ComboBoxItem Content="沉浸" />
+                                    <ComboBoxItem Content="液态" /><ComboBoxItem Content="关闭" />
+                                </ComboBox>
+                                <TextBlock Text="背景动感" FontSize="11" />
+                                <Slider x:Name="BackgroundLifeSlider" Minimum="0" Maximum="1" Value="0.42" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="镜头呼吸" FontSize="11" />
+                                <Slider x:Name="BackgroundCameraSlider" Minimum="0" Maximum="1" Value="0.34" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="音乐形变" FontSize="11" />
+                                <Slider x:Name="BackgroundAudioWarpSlider" Minimum="0" Maximum="1" Value="0.14" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="空间视差" FontSize="11" />
+                                <Slider x:Name="BackgroundParallaxSlider" Minimum="0" Maximum="1" Value="0.22" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="流动光线" FontSize="11" />
+                                <Slider x:Name="BackgroundLightFlowSlider" Minimum="0" Maximum="1" Value="0.12" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="主体保护" FontSize="11" />
+                                <Slider x:Name="SubjectProtectionSlider" Minimum="0" Maximum="1" Value="0.82" ValueChanged="VisualSettings_ValueChanged" />
+                                <ToggleSwitch x:Name="SmartCompositionToggle" Header="智能构图保护" IsOn="True" Toggled="VisualSettings_Toggled" />
+                                <TextBlock Text="主体轮廓环境光" FontSize="11" />
+                                <Slider x:Name="SubjectEdgeLightSlider" Minimum="0" Maximum="1" Value="0.12" ValueChanged="VisualSettings_ValueChanged" />
                                 <ToggleSwitch x:Name="VideoLoopToggle" Header="背景视频循环" IsOn="True" Toggled="VideoSettings_Toggled" />
+                                <TextBlock Text="背景切换动画" FontSize="11" />
+                                <ComboBox x:Name="BackgroundTransitionBox" SelectedIndex="0" SelectionChanged="VisualSettings_SelectionChanged">
+                                    <ComboBoxItem Content="淡入淡出" /><ComboBoxItem Content="横向滑动" />
+                                    <ComboBoxItem Content="缩放叠化" /><ComboBoxItem Content="直接切换" />
+                                </ComboBox>
+                                <TextBlock Text="切换时长" FontSize="11" />
+                                <Slider x:Name="BackgroundTransitionDurationSlider" Minimum="0.2" Maximum="2.5" Value="1.35" ValueChanged="VisualSettings_ValueChanged" />
                                 <ToggleSwitch x:Name="BackgroundVideoAudioToggle" Header="使用背景视频声音" IsOn="False" Toggled="VideoSettings_Toggled" />
+                                <TextBlock Text="背景视频音量" FontSize="11" />
+                                <Slider x:Name="BackgroundVideoVolumeSlider" Minimum="0" Maximum="1" Value="0.25" ValueChanged="VideoSettings_ValueChanged" />
                             </StackPanel>
                         </ScrollViewer>
                     </TabViewItem>
@@ -200,7 +238,7 @@
                                     <ComboBoxItem Content="Electronic" />
                                 </ComboBox>
                                 <TextBlock Text="可视化类型" FontSize="11" />
-                                <ComboBox x:Name="VisualizerBox" SelectedIndex="5">
+                                <ComboBox x:Name="VisualizerBox" SelectedIndex="5" SelectionChanged="VisualSettings_SelectionChanged">
                                     <ComboBoxItem Content="Wave · 丝绸波形" />
                                     <ComboBoxItem Content="Spectrum · 动态频谱" />
                                     <ComboBoxItem Content="Mirror · 镜像地平线" />
@@ -209,17 +247,61 @@
                                     <ComboBoxItem Content="Aurora · 极光帷幕" />
                                     <ComboBoxItem Content="Prism · 棱镜隧道" />
                                     <ComboBoxItem Content="Nebula · 星尘星云" />
-                                    <ComboBoxItem Content="Flower · 万象花镜" />
+                                    <ComboBoxItem Content="Kaleidoscope · 万象花镜" />
                                     <ComboBoxItem Content="Starfield · 星河跃迁" />
                                     <ComboBoxItem Content="Border · 流光边界" />
                                 </ComboBox>
                                 <TextBlock Text="响应强度" FontSize="11" />
-                                <Slider x:Name="VisualizerIntensitySlider" Minimum="0" Maximum="1" Value="0.74" />
+                                <Slider x:Name="VisualizerIntensitySlider" Minimum="0" Maximum="1" Value="0.74" ValueChanged="VisualSettings_ValueChanged" />
                                 <TextBlock Text="可视化大小" FontSize="11" />
-                                <Slider x:Name="VisualizerScaleSlider" Minimum="0.4" Maximum="1.5" Value="1" />
+                                <Slider x:Name="VisualizerScaleSlider" Minimum="0.4" Maximum="1.5" Value="1" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="可视化位置" FontSize="11" />
+                                <Slider x:Name="VisualizerPositionSlider" Minimum="0.08" Maximum="0.92" Value="0.31" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="光晕" FontSize="11" />
+                                <Slider x:Name="VisualizerGlowSlider" Minimum="0" Maximum="1" Value="0.96" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="细节密度" FontSize="11" />
+                                <Slider x:Name="VisualizerDensitySlider" Minimum="0.15" Maximum="1" Value="0.86" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="色彩丰富度" FontSize="11" />
+                                <Slider x:Name="VisualizerColorRichnessSlider" Minimum="0" Maximum="1" Value="0.72" ValueChanged="VisualSettings_ValueChanged" />
                                 <TextBlock Text="音乐响应颜色" FontSize="11" />
-                                <ToggleSwitch x:Name="RainbowToggle" Header="七色流光" IsOn="True" />
+                                <ToggleSwitch x:Name="RainbowToggle" Header="七色流光" IsOn="True" Toggled="VisualSettings_Toggled" />
+                                <TextBlock Text="旋律色彩强度" FontSize="11" />
+                                <Slider x:Name="RainbowIntensitySlider" Minimum="0.25" Maximum="1" Value="0.74" ValueChanged="VisualSettings_ValueChanged" />
+                                <Expander Header="高级视觉设置" IsExpanded="False">
+                                    <StackPanel Spacing="9" Padding="0,8,0,2">
+                                        <TextBlock Text="音乐感知" FontSize="11" />
+                                        <Slider x:Name="MusicAwarenessSlider" Minimum="0" Maximum="1" Value="0.88" ValueChanged="VisualSettings_ValueChanged" />
+                                        <TextBlock Text="平滑" FontSize="11" />
+                                        <Slider x:Name="VisualizerSmoothingSlider" Minimum="0" Maximum="1" Value="0.72" ValueChanged="VisualSettings_ValueChanged" />
+                                        <TextBlock Text="炫丽度" FontSize="11" />
+                                        <Slider x:Name="VisualizerBrillianceSlider" Minimum="0" Maximum="1" Value="0.72" ValueChanged="VisualSettings_ValueChanged" />
+                                        <TextBlock Text="背景融合" FontSize="11" />
+                                        <Slider x:Name="VisualizerIntegrationSlider" Minimum="0" Maximum="1" Value="0.72" ValueChanged="VisualSettings_ValueChanged" />
+                                        <TextBlock Text="拖尾长度" FontSize="11" />
+                                        <Slider x:Name="VisualizerTrailSlider" Minimum="0" Maximum="0.85" Value="0.28" ValueChanged="VisualSettings_ValueChanged" />
+                                    </StackPanel>
+                                </Expander>
                                 <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Message="高性能模式优先将合成任务提交到 NVIDIA GPU。" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabViewItem>
+                    <TabViewItem Header="氛围">
+                        <ScrollViewer Padding="16,14">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="场景氛围" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock Text="按歌曲意境选择轻量动态元素；默认关闭，不改变原背景色调。" FontSize="11" Foreground="{StaticResource SikaMuted}" TextWrapping="Wrap" />
+                                <ComboBox x:Name="AtmospherePresetBox" SelectedIndex="0" SelectionChanged="VisualSettings_SelectionChanged">
+                                    <ComboBoxItem Content="关闭氛围" /><ComboBoxItem Content="禅意山水" /><ComboBoxItem Content="湖畔治愈" />
+                                    <ComboBoxItem Content="雨夜抒情" /><ComboBoxItem Content="冬日寂静" /><ComboBoxItem Content="森林轻风" />
+                                    <ComboBoxItem Content="春日花语" /><ComboBoxItem Content="秋日回忆" /><ComboBoxItem Content="夏夜星萤" />
+                                    <ComboBoxItem Content="海岸潮汐" /><ComboBoxItem Content="云海日出" /><ComboBoxItem Content="国风花境" />
+                                    <ComboBoxItem Content="水墨禅境" /><ComboBoxItem Content="城市霓虹" /><ComboBoxItem Content="沙海孤旅" />
+                                    <ComboBoxItem Content="烛火静谧" /><ComboBoxItem Content="电影史诗" />
+                                </ComboBox>
+                                <TextBlock Text="氛围强度" FontSize="11" /><Slider x:Name="AtmosphereIntensitySlider" Minimum="0" Maximum="1" Value="0.58" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="音乐联动" FontSize="11" /><Slider x:Name="AtmosphereResponseSlider" Minimum="0" Maximum="1" Value="0.68" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="元素密度" FontSize="11" /><Slider x:Name="AtmosphereDensitySlider" Minimum="0" Maximum="1" Value="0.52" ValueChanged="VisualSettings_ValueChanged" />
+                                <TextBlock Text="水面位置" FontSize="11" /><Slider x:Name="AtmosphereWaterlineSlider" Minimum="0.48" Maximum="0.88" Value="0.70" ValueChanged="VisualSettings_ValueChanged" />
                             </StackPanel>
                         </ScrollViewer>
                     </TabViewItem>
@@ -269,16 +351,31 @@
                                 <Slider x:Name="LyricFontSizeSlider" Minimum="24" Maximum="76" Value="46" ValueChanged="LyricsStyle_ValueChanged" />
                                 <TextBlock Text="垂直位置" FontSize="11" />
                                 <Slider x:Name="LyricPositionSlider" Minimum="0.28" Maximum="0.82" Value="0.60" ValueChanged="LyricsStyle_ValueChanged" />
+                                <TextBlock Text="字幕宽度" FontSize="11" />
+                                <Slider x:Name="LyricWidthSlider" Minimum="0.45" Maximum="0.96" Value="0.82" ValueChanged="LyricsStyle_ValueChanged" />
+                                <TextBlock Text="行间距" FontSize="11" />
+                                <Slider x:Name="LyricLineSpacingSlider" Minimum="1.2" Maximum="2.5" Value="1.85" ValueChanged="LyricsStyle_ValueChanged" />
+                                <TextBlock Text="非当前歌词亮度" FontSize="11" />
+                                <Slider x:Name="LyricInactiveOpacitySlider" Minimum="0.08" Maximum="0.72" Value="0.24" ValueChanged="LyricsStyle_ValueChanged" />
+                                <TextBlock Text="歌词光晕" FontSize="11" />
+                                <Slider x:Name="LyricGlowSlider" Minimum="0" Maximum="1" Value="0.82" ValueChanged="LyricsStyle_ValueChanged" />
+                                <TextBlock Text="动画时长" FontSize="11" />
+                                <Slider x:Name="LyricAnimationDurationSlider" Minimum="0.18" Maximum="1.2" Value="0.62" ValueChanged="LyricsStyle_ValueChanged" />
+                                <TextBlock Text="文字对齐" FontSize="11" />
+                                <ComboBox x:Name="LyricAlignmentBox" SelectedIndex="1" SelectionChanged="LyricsStyle_SelectionChanged">
+                                    <ComboBoxItem Content="左对齐" /><ComboBoxItem Content="居中" /><ComboBoxItem Content="右对齐" />
+                                </ComboBox>
                                 <TextBlock Text="切换动画" FontSize="11" />
-                                <ComboBox x:Name="LyricAnimationBox" SelectedIndex="0">
+                                <ComboBox x:Name="LyricAnimationBox" SelectedIndex="0" SelectionChanged="LyricsStyle_SelectionChanged">
                                     <ComboBoxItem Content="连续上移" />
                                     <ComboBoxItem Content="柔和淡入" />
                                     <ComboBoxItem Content="呼吸缩放" />
                                     <ComboBoxItem Content="渐进显现" />
                                     <ComboBoxItem Content="光晕绽放" />
+                                    <ComboBoxItem Content="无动画" />
                                 </ComboBox>
                                 <TextBlock Text="容错显示" FontSize="11" />
-                                <ComboBox x:Name="LyricWindowBox" SelectedIndex="1">
+                                <ComboBox x:Name="LyricWindowBox" SelectedIndex="1" SelectionChanged="LyricsStyle_SelectionChanged">
                                     <ComboBoxItem Content="3 句" />
                                     <ComboBoxItem Content="5 句" />
                                 </ComboBox>
@@ -289,11 +386,17 @@
                         <ScrollViewer Padding="16,14">
                             <StackPanel Spacing="12">
                                 <TextBlock Text="片头信息" FontSize="16" FontWeight="SemiBold" />
+                                <ToggleSwitch x:Name="IntroEnabledToggle" Header="启用片头" IsOn="True" Toggled="IntroSettings_Toggled" />
                                 <TextBox x:Name="SongTitleBox" Header="歌名" PlaceholderText="输入歌名" />
+                                <Button x:Name="UseAudioFilenameButton" Click="UseAudioFilenameButton_Click" Visibility="Collapsed">使用音乐文件名</Button>
                                 <TextBox x:Name="AuthorNameBox" Header="作者" Text="鹿鸣松(Lumisum)" />
                                 <ToggleSwitch x:Name="ShowIntroDateToggle" Header="显示生成日期" IsOn="True" Toggled="IntroSettings_Toggled" />
                                 <TextBlock Text="片头时长" FontSize="11" />
-                                <Slider x:Name="IntroDurationSlider" Minimum="2" Maximum="20" Value="12" />
+                                <Slider x:Name="IntroDurationSlider" Minimum="2" Maximum="20" Value="12" ValueChanged="IntroSettings_ValueChanged" />
+                                <TextBlock Text="歌名大小" FontSize="11" />
+                                <Slider x:Name="IntroTitleSizeSlider" Minimum="36" Maximum="86" Value="72" ValueChanged="IntroSettings_ValueChanged" />
+                                <TextBlock Text="淡入淡出时长" FontSize="11" />
+                                <Slider x:Name="IntroAnimationDurationSlider" Minimum="0.4" Maximum="2" Value="1.15" ValueChanged="IntroSettings_ValueChanged" />
                                 <TextBlock Text="动画" FontSize="11" />
                                 <ComboBox x:Name="IntroAnimationBox" SelectedIndex="0">
                                     <ComboBoxItem Content="流光上浮" />

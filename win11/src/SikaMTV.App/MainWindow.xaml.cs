@@ -7,12 +7,14 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Graphics.Imaging;
+using Windows.Media.FaceAnalysis;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
@@ -23,10 +25,19 @@ namespace SikaMTV.Win11;
 
 public sealed partial class MainWindow : Window
 {
+    private sealed record BackgroundFrameData(byte[] Pixels, byte[] SubjectMask, uint Width, uint Height, Vector3 Primary, Vector3 Secondary);
     private readonly ObservableCollection<MediaEntry> _assets = [];
     private readonly List<MediaEntry> _allAssets = [];
+    private readonly List<MediaEntry> _backgroundAssets = [];
+    private readonly Dictionary<string, BackgroundFrameData> _backgroundImageCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Queue<string> _backgroundImageCacheOrder = new();
+    private readonly Dictionary<string, byte[]> _subjectMaskCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Queue<string> _subjectMaskCacheOrder = new();
+    private readonly Dictionary<string, (Vector3 Primary, Vector3 Secondary)> _backgroundPaletteCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly MediaPlayer _audioPlayer = new();
     private readonly MediaPlayer _backgroundPlayer = new();
+    private readonly SemaphoreSlim _subjectAnalysisLock = new(1, 1);
+    private FaceDetector? _faceDetector;
     private readonly DispatcherQueueTimer _playbackTimer;
     private readonly DispatcherQueueTimer _exportProgressTimer;
     private readonly Stopwatch _articleClock = new();
@@ -53,7 +64,15 @@ public sealed partial class MainWindow : Window
     private uint _backgroundPixelWidth;
     private uint _backgroundPixelHeight;
     private int? _lastLyricIndex;
+    private string _requestedPreviewPair = string.Empty;
+    private string _appliedPreviewPair = string.Empty;
+    private string _previewAudioVideoPath = string.Empty;
+    private int _previewPairGeneration;
+    private bool _backgroundAudioPlaying;
     private string _selectedFontFamily = "素材集市康康体";
+    private string _automaticSongTitle = string.Empty;
+    private Vector3 _scenePalettePrimary = new(0.48f, 0.72f, 1.0f);
+    private Vector3 _scenePaletteSecondary = new(0.82f, 0.52f, 0.94f);
 
     public MainWindow()
     {
@@ -107,6 +126,7 @@ public sealed partial class MainWindow : Window
         UpdateArticleSettings();
         RebuildArticlePages();
         ApplyLyricsStyle();
+        TemplateBox_SelectionChanged(TemplateBox, null!);
         UpdateGenerateAvailability();
     }
 
@@ -186,8 +206,6 @@ public sealed partial class MainWindow : Window
             added++;
 
             // New files stay in the library until the user explicitly adds them to a project slot.
-            if (kind == MediaKind.Audio && string.IsNullOrWhiteSpace(SongTitleBox.Text))
-                SongTitleBox.Text = Path.GetFileNameWithoutExtension(file.Name);
         }
 
         RefreshAssetFilter();
@@ -208,9 +226,18 @@ public sealed partial class MainWindow : Window
         {
             case MediaKind.Image:
             case MediaKind.Video:
-                _backgroundAsset = entry;
-                WorkspaceBackgroundText.Text = entry.Name;
-                await ShowBackgroundAsync(entry);
+                if (!_backgroundAssets.Any(existing => existing.File.Path.Equals(entry.File.Path, StringComparison.OrdinalIgnoreCase)))
+                    _backgroundAssets.Add(entry);
+                _backgroundAsset ??= entry;
+                if (!ReferenceEquals(_backgroundAsset, entry))
+                {
+                    if (entry.Kind == MediaKind.Image && !_backgroundImageCache.ContainsKey(entry.File.Path))
+                        CacheBackgroundPixels(entry.File.Path, await LoadBackgroundPixelsAsync(entry));
+                    else if (entry.Kind == MediaKind.Video)
+                        await LoadBackgroundVideoPaletteAsync(entry);
+                }
+                UpdateBackgroundSummary();
+                if (ReferenceEquals(_backgroundAsset, entry)) await ShowBackgroundAsync(entry);
                 break;
             case MediaKind.Audio:
                 _audioAsset = entry;
@@ -238,6 +265,8 @@ public sealed partial class MainWindow : Window
     private async Task ShowBackgroundAsync(MediaEntry entry)
     {
         PreviewPlaceholder.Visibility = Visibility.Collapsed;
+        BackgroundVideoAudioToggle.IsEnabled = entry.Kind == MediaKind.Video;
+        BackgroundVideoVolumeSlider.IsEnabled = entry.Kind == MediaKind.Video && BackgroundVideoAudioToggle.IsOn;
         if (entry.Kind == MediaKind.Image)
         {
             if (_gpuInitialized)
@@ -248,6 +277,8 @@ public sealed partial class MainWindow : Window
             }
             BackgroundVideo.Visibility = Visibility.Collapsed;
             _backgroundPlayer.Source = null;
+            _previewAudioVideoPath = string.Empty;
+            _backgroundAudioPlaying = false;
             using var stream = await entry.File.OpenAsync(FileAccessMode.Read);
             var bitmap = new BitmapImage();
             await bitmap.SetSourceAsync(stream);
@@ -257,39 +288,41 @@ public sealed partial class MainWindow : Window
             _backgroundPixelWidth = 0;
             _backgroundPixelHeight = 0;
 
-            if (_gpuInitialized)
+            if (!_backgroundImageCache.TryGetValue(entry.File.Path, out var decoded))
             {
-                using var decodeStream = await entry.File.OpenAsync(FileAccessMode.Read);
-                var decoder = await BitmapDecoder.CreateAsync(decodeStream);
-                var scale = Math.Min(1.0, Math.Min(1920.0 / decoder.OrientedPixelWidth, 1080.0 / decoder.OrientedPixelHeight));
-                var scaledWidth = (uint)Math.Max(1, Math.Round(decoder.OrientedPixelWidth * scale));
-                var scaledHeight = (uint)Math.Max(1, Math.Round(decoder.OrientedPixelHeight * scale));
-                var transform = new BitmapTransform
-                {
-                    ScaledWidth = scaledWidth,
-                    ScaledHeight = scaledHeight,
-                    InterpolationMode = BitmapInterpolationMode.Fant
-                };
-                using var softwareBitmap = await decoder.GetSoftwareBitmapAsync(
-                    BitmapPixelFormat.Bgra8,
-                    BitmapAlphaMode.Premultiplied,
-                    transform,
-                    ExifOrientationMode.RespectExifOrientation,
-                    ColorManagementMode.DoNotColorManage);
-                var bufferCapacity = checked((uint)(softwareBitmap.PixelWidth * softwareBitmap.PixelHeight * 4));
-                var buffer = new Windows.Storage.Streams.Buffer(bufferCapacity);
-                softwareBitmap.CopyToBuffer(buffer);
-                _backgroundPixels = new byte[checked((int)buffer.Length)];
-                using var dataReader = DataReader.FromBuffer(buffer);
-                dataReader.ReadBytes(_backgroundPixels);
-                _backgroundPixelWidth = checked((uint)softwareBitmap.PixelWidth);
-                _backgroundPixelHeight = checked((uint)softwareBitmap.PixelHeight);
-                CommitGpuBackground();
+                decoded = await LoadBackgroundPixelsAsync(entry);
+                CacheBackgroundPixels(entry.File.Path, decoded);
             }
+            _backgroundPixels = decoded.Pixels;
+            _backgroundPixelWidth = decoded.Width;
+            _backgroundPixelHeight = decoded.Height;
+            (_scenePalettePrimary, _scenePaletteSecondary) = (decoded.Primary, decoded.Secondary);
+            if (_gpuInitialized) CommitGpuBackground();
         }
         else
         {
             _backgroundPixels = null;
+            try
+            {
+                using var thumbnail = await entry.File.GetThumbnailAsync(Windows.Storage.FileProperties.ThumbnailMode.VideosView, 192);
+                if (thumbnail is not null)
+                {
+                    var decoder = await BitmapDecoder.CreateAsync(thumbnail);
+                    using var bitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+                    var buffer = new Windows.Storage.Streams.Buffer(checked((uint)(bitmap.PixelWidth * bitmap.PixelHeight * 4)));
+                    bitmap.CopyToBuffer(buffer);
+                    var pixels = new byte[checked((int)buffer.Length)];
+                    using var reader = DataReader.FromBuffer(buffer);
+                    reader.ReadBytes(pixels);
+                    var palette = ScenePaletteAnalyzer.AnalyzeBgra(pixels, (int)bitmap.PixelWidth, (int)bitmap.PixelHeight);
+                    (_scenePalettePrimary, _scenePaletteSecondary) = palette;
+                    _backgroundPaletteCache[entry.File.Path] = palette;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+            {
+                SetStatus($"已载入视频背景；未能读取预览帧配色，使用柔和默认配色（{exception.Message}）。");
+            }
             if (_gpuInitialized)
             {
                 NvidiaGpuBridge.StopPreviewBackgroundVideo();
@@ -299,17 +332,301 @@ public sealed partial class MainWindow : Window
             BackgroundImage.Visibility = Visibility.Collapsed;
             var mediaSource = MediaSource.CreateFromStorageFile(entry.File);
             _backgroundPlayer.Source = mediaSource;
+            _previewAudioVideoPath = entry.File.Path;
+            _backgroundAudioPlaying = false;
             _backgroundPlayer.IsLoopingEnabled = VideoLoopToggle.IsOn;
             _backgroundPlayer.IsMuted = !BackgroundVideoAudioToggle.IsOn;
+            _backgroundPlayer.Volume = BackgroundVideoVolumeSlider.Value;
             BackgroundVideo.Visibility = Visibility.Collapsed;
             VisualizerPanel.Visibility = Visibility.Visible;
         }
+        ApplyAdvancedVisualSettings();
     }
 
-    private Task LoadAudioAsync(MediaEntry entry)
+    private void UpdateBackgroundSummary()
+    {
+        var hasVideoBackground = _backgroundAssets.Any(asset => asset.Kind == MediaKind.Video);
+        BackgroundVideoAudioToggle.IsEnabled = hasVideoBackground;
+        BackgroundVideoVolumeSlider.IsEnabled = hasVideoBackground && BackgroundVideoAudioToggle.IsOn;
+        WorkspaceBackgroundText.Text = _backgroundAssets.Count switch
+        {
+            0 => "未添加 · 图片 / 视频",
+            1 => _backgroundAssets[0].Name,
+            _ => $"{_backgroundAssets.Count} 个背景 · 按音乐时长自动轮播"
+        };
+    }
+
+    private async Task<BackgroundFrameData> LoadBackgroundPixelsAsync(MediaEntry entry)
+    {
+        using var stream = await entry.File.OpenAsync(FileAccessMode.Read);
+        var decoder = await BitmapDecoder.CreateAsync(stream);
+        var scale = Math.Min(1.0, Math.Min(1920.0 / decoder.OrientedPixelWidth, 1080.0 / decoder.OrientedPixelHeight));
+        var transform = new BitmapTransform
+        {
+            ScaledWidth = (uint)Math.Max(1, Math.Round(decoder.OrientedPixelWidth * scale)),
+            ScaledHeight = (uint)Math.Max(1, Math.Round(decoder.OrientedPixelHeight * scale)),
+            InterpolationMode = BitmapInterpolationMode.Fant
+        };
+        using var bitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+            transform, ExifOrientationMode.RespectExifOrientation, ColorManagementMode.DoNotColorManage);
+        var buffer = new Windows.Storage.Streams.Buffer(checked((uint)(bitmap.PixelWidth * bitmap.PixelHeight * 4)));
+        bitmap.CopyToBuffer(buffer);
+        var pixels = new byte[checked((int)buffer.Length)];
+        using (var reader = DataReader.FromBuffer(buffer)) reader.ReadBytes(pixels);
+        var palette = ScenePaletteAnalyzer.AnalyzeBgra(pixels, bitmap.PixelWidth, bitmap.PixelHeight);
+        if (!_subjectMaskCache.TryGetValue(entry.File.Path, out var subjectMask))
+        {
+            var faces = await DetectFaceBoundsAsync(bitmap);
+            subjectMask = await Task.Run(() => SceneSubjectAnalyzer.AnalyzeBgra(
+                pixels, (int)bitmap.PixelWidth, (int)bitmap.PixelHeight, faces));
+            CacheSubjectMask(entry.File.Path, subjectMask);
+        }
+        return new BackgroundFrameData(pixels, subjectMask, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, palette.Primary, palette.Secondary);
+    }
+
+    private async Task<IReadOnlyList<(float X, float Y, float Width, float Height)>> DetectFaceBoundsAsync(SoftwareBitmap source)
+    {
+        await _subjectAnalysisLock.WaitAsync();
+        try
+        {
+            if (!FaceDetector.GetSupportedBitmapPixelFormats().Contains(BitmapPixelFormat.Gray8)) return [];
+            _faceDetector ??= await FaceDetector.CreateAsync();
+            if (source.BitmapPixelFormat == BitmapPixelFormat.Gray8)
+            {
+                var faces = await _faceDetector.DetectFacesAsync(source);
+                return faces.Select(face => ((float)face.FaceBox.X / source.PixelWidth, (float)face.FaceBox.Y / source.PixelHeight,
+                    (float)face.FaceBox.Width / source.PixelWidth, (float)face.FaceBox.Height / source.PixelHeight)).ToArray();
+            }
+
+            using var gray = SoftwareBitmap.Convert(source, BitmapPixelFormat.Gray8);
+            var detected = await _faceDetector.DetectFacesAsync(gray);
+            return detected.Select(face => ((float)face.FaceBox.X / gray.PixelWidth, (float)face.FaceBox.Y / gray.PixelHeight,
+                (float)face.FaceBox.Width / gray.PixelWidth, (float)face.FaceBox.Height / gray.PixelHeight)).ToArray();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            SetStatus($"已使用显著性保护；本机人脸识别暂不可用（{exception.Message}）。");
+            return [];
+        }
+        finally
+        {
+            _subjectAnalysisLock.Release();
+        }
+    }
+
+    private void CacheBackgroundPixels(string path, BackgroundFrameData data)
+    {
+        _backgroundPaletteCache[path] = (data.Primary, data.Secondary);
+        CacheSubjectMask(path, data.SubjectMask);
+        if (!_backgroundImageCache.ContainsKey(path)) _backgroundImageCacheOrder.Enqueue(path);
+        _backgroundImageCache[path] = data;
+        while (_backgroundImageCacheOrder.Count > 4)
+        {
+            var expired = _backgroundImageCacheOrder.Dequeue();
+            if (!string.Equals(expired, path, StringComparison.OrdinalIgnoreCase)) _backgroundImageCache.Remove(expired);
+        }
+    }
+
+    private void CacheSubjectMask(string path, byte[] mask)
+    {
+        if (!_subjectMaskCache.ContainsKey(path)) _subjectMaskCacheOrder.Enqueue(path);
+        _subjectMaskCache[path] = mask;
+        while (_subjectMaskCacheOrder.Count > 128)
+            _subjectMaskCache.Remove(_subjectMaskCacheOrder.Dequeue());
+    }
+
+    private async Task LoadPreviewBackgroundPairAsync(string pairKey, int generation,
+        MediaEntry current, MediaEntry? next)
+    {
+        try
+        {
+            if (current.Kind == MediaKind.Image && !_backgroundImageCache.TryGetValue(current.File.Path, out _))
+                CacheBackgroundPixels(current.File.Path, await LoadBackgroundPixelsAsync(current));
+            if (next?.Kind == MediaKind.Image && !_backgroundImageCache.TryGetValue(next.File.Path, out _))
+                CacheBackgroundPixels(next.File.Path, await LoadBackgroundPixelsAsync(next));
+            if (current.Kind == MediaKind.Video)
+                (_scenePalettePrimary, _scenePaletteSecondary) = await LoadBackgroundVideoPaletteAsync(current);
+            if (generation != _previewPairGeneration || !string.Equals(pairKey, _requestedPreviewPair, StringComparison.Ordinal)) return;
+
+            if (current.Kind == MediaKind.Image && _backgroundImageCache.TryGetValue(current.File.Path, out var primary))
+            {
+                _backgroundPixels = primary.Pixels;
+                _backgroundPixelWidth = primary.Width;
+                _backgroundPixelHeight = primary.Height;
+                _scenePalettePrimary = primary.Primary;
+                _scenePaletteSecondary = primary.Secondary;
+                NvidiaGpuBridge.SetBackgroundImage(primary.Pixels, primary.Width, primary.Height, primary.Width * 4);
+                NvidiaGpuBridge.SetSubjectMask(primary.SubjectMask, SceneSubjectAnalyzer.MaskSize, SceneSubjectAnalyzer.MaskSize, SceneSubjectAnalyzer.MaskSize, 0);
+            }
+            else
+            {
+                NvidiaGpuBridge.SetSubjectMask([], 0, 0, 0, 0);
+            }
+            if (next?.Kind == MediaKind.Image && _backgroundImageCache.TryGetValue(next.File.Path, out var secondary))
+            {
+                NvidiaGpuBridge.SetBackgroundImageSecondary(secondary.Pixels, secondary.Width, secondary.Height, secondary.Width * 4);
+                NvidiaGpuBridge.SetSubjectMask(secondary.SubjectMask, SceneSubjectAnalyzer.MaskSize, SceneSubjectAnalyzer.MaskSize, SceneSubjectAnalyzer.MaskSize, 1);
+            }
+            else NvidiaGpuBridge.SetSubjectMask([], 0, 0, 0, 1);
+            _appliedPreviewPair = pairKey;
+            ApplyAdvancedVisualSettings();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+        {
+            if (generation == _previewPairGeneration)
+                SetStatus($"背景轮播预览载入失败：{exception.Message}");
+        }
+    }
+
+    private void UpdateBackgroundCarouselPreview(double visualTime)
+    {
+        if (_backgroundAssets.Count == 0) return;
+        var duration = _isArticleMode ? _articleDurationSeconds : _audioPlayer.PlaybackSession.NaturalDuration.TotalSeconds;
+        var singleVideoDuration = _backgroundAssets.Count == 1 && _backgroundAssets[0].Kind == MediaKind.Video
+            ? _backgroundPlayer.PlaybackSession.NaturalDuration.TotalSeconds : 0;
+        var state = BackgroundPreviewTimeline.At(visualTime, duration, _backgroundAssets.Count,
+            BackgroundTransitionBox.SelectedIndex, BackgroundTransitionDurationSlider.Value,
+            singleVideoDuration, VideoLoopToggle.IsOn);
+        var current = _backgroundAssets[state.CurrentIndex];
+        var next = state.NextIndex is int nextIndex ? _backgroundAssets[nextIndex] : null;
+        UpdateBackgroundAudioPreview(current, state.CurrentLocalTime);
+        if (!_gpuInitialized || !_gpuPanelAttached || _exportInProgress) return;
+        var pairKey = $"{state.CurrentIndex}:{state.NextIndex?.ToString() ?? "-"}";
+        if (!string.Equals(pairKey, _requestedPreviewPair, StringComparison.Ordinal))
+        {
+            _requestedPreviewPair = pairKey;
+            var generation = ++_previewPairGeneration;
+            _ = LoadPreviewBackgroundPairAsync(pairKey, generation, current, next);
+        }
+        if (!string.Equals(pairKey, _appliedPreviewPair, StringComparison.Ordinal)) return;
+
+        var paletteA = _backgroundPaletteCache.GetValueOrDefault(current.File.Path, (_scenePalettePrimary, _scenePaletteSecondary));
+        var paletteB = next is null ? paletteA : _backgroundPaletteCache.GetValueOrDefault(next.File.Path, paletteA);
+        var paletteMix = state.NextIndex.HasValue ? state.TransitionProgress : 0;
+        var primaryPalette = Vector3.Lerp(paletteA.Primary, paletteB.Primary, paletteMix);
+        var secondaryPalette = Vector3.Lerp(paletteA.Secondary, paletteB.Secondary, paletteMix);
+        NvidiaGpuBridge.SetScenePalette(primaryPalette.X, primaryPalette.Y, primaryPalette.Z,
+            secondaryPalette.X, secondaryPalette.Y, secondaryPalette.Z);
+        var segmentDuration = Math.Max(state.SegmentDuration, 0.001);
+        NvidiaGpuBridge.SetBackgroundMotionTimeline(
+            (float)Math.Clamp(state.CurrentLocalTime / segmentDuration, 0, 1),
+            current.Kind == MediaKind.Image ? 1f : 0.16f,
+            (float)Math.Clamp(state.NextLocalTime / segmentDuration, 0, 1),
+            next is null ? 0f : next.Kind == MediaKind.Image ? 1f : 0.16f);
+
+        var primaryVideo = current.Kind == MediaKind.Video ? current.File.Path : string.Empty;
+        var secondaryVideo = next?.Kind == MediaKind.Video ? next.File.Path : string.Empty;
+        NvidiaGpuBridge.UpdatePreviewBackgroundCarousel(primaryVideo, state.CurrentLocalTime,
+            secondaryVideo, state.NextLocalTime, VideoLoopToggle.IsOn ? 1 : 0,
+            state.TransitionProgress, state.TransitionKind);
+    }
+
+    private void UpdateBackgroundAudioPreview(MediaEntry current, double localTime)
+    {
+        var path = current.Kind == MediaKind.Video ? current.File.Path : string.Empty;
+        if (!string.Equals(path, _previewAudioVideoPath, StringComparison.OrdinalIgnoreCase))
+        {
+            _backgroundPlayer.Pause();
+            _backgroundPlayer.Source = path.Length == 0 ? null : MediaSource.CreateFromStorageFile(current.File);
+            _previewAudioVideoPath = path;
+            _backgroundAudioPlaying = false;
+        }
+        if (path.Length == 0) return;
+
+        _backgroundPlayer.IsLoopingEnabled = VideoLoopToggle.IsOn;
+        _backgroundPlayer.IsMuted = !BackgroundVideoAudioToggle.IsOn;
+        _backgroundPlayer.Volume = BackgroundVideoVolumeSlider.Value;
+        var duration = _backgroundPlayer.PlaybackSession.NaturalDuration.TotalSeconds;
+        var target = duration > 0 && VideoLoopToggle.IsOn ? localTime % duration : localTime;
+        if (Math.Abs(_backgroundPlayer.PlaybackSession.Position.TotalSeconds - target) > 0.3)
+            _backgroundPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(Math.Max(0, target));
+        var shouldPlay = _audioPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Playing && BackgroundVideoAudioToggle.IsOn;
+        if (shouldPlay != _backgroundAudioPlaying)
+        {
+            if (shouldPlay) _backgroundPlayer.Play();
+            else _backgroundPlayer.Pause();
+            _backgroundAudioPlaying = shouldPlay;
+        }
+    }
+
+    private async Task<(Vector3 Primary, Vector3 Secondary)> LoadBackgroundVideoPaletteAsync(MediaEntry entry)
+    {
+        if (_backgroundPaletteCache.TryGetValue(entry.File.Path, out var cached)) return cached;
+        try
+        {
+            using var thumbnail = await entry.File.GetThumbnailAsync(Windows.Storage.FileProperties.ThumbnailMode.VideosView, 192);
+            if (thumbnail is null) return (_scenePalettePrimary, _scenePaletteSecondary);
+            var decoder = await BitmapDecoder.CreateAsync(thumbnail);
+            using var bitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            var buffer = new Windows.Storage.Streams.Buffer(checked((uint)(bitmap.PixelWidth * bitmap.PixelHeight * 4)));
+            bitmap.CopyToBuffer(buffer);
+            var pixels = new byte[checked((int)buffer.Length)];
+            using (var reader = DataReader.FromBuffer(buffer)) reader.ReadBytes(pixels);
+            var palette = ScenePaletteAnalyzer.AnalyzeBgra(pixels, bitmap.PixelWidth, bitmap.PixelHeight);
+            _backgroundPaletteCache[entry.File.Path] = palette;
+            return palette;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+        {
+            SetStatus($"未能读取视频配色，将使用默认配色：{exception.Message}");
+            return (_scenePalettePrimary, _scenePaletteSecondary);
+        }
+    }
+
+    private async Task<string> BuildBackgroundManifestAsync()
+    {
+        var maskPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var asset in _backgroundAssets)
+        {
+            if (asset.Kind == MediaKind.Image)
+            {
+                if (!_backgroundImageCache.TryGetValue(asset.File.Path, out var imageData))
+                {
+                    CacheBackgroundPixels(asset.File.Path, await LoadBackgroundPixelsAsync(asset));
+                    imageData = _backgroundImageCache[asset.File.Path];
+                }
+                var cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "SikaMTV", "Cache", "subject-masks");
+                Directory.CreateDirectory(cacheRoot);
+                var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(asset.File.Path)));
+                var maskPath = Path.Combine(cacheRoot, key + ".mask");
+                await File.WriteAllBytesAsync(maskPath, imageData.SubjectMask);
+                maskPaths[asset.File.Path] = maskPath;
+            }
+            else
+            {
+                await LoadBackgroundVideoPaletteAsync(asset);
+            }
+        }
+
+        static string Color(Vector3 value) => string.Join(',',
+            value.X.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture),
+            value.Y.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture),
+            value.Z.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
+
+        var lines = new List<string>(_backgroundAssets.Count);
+        foreach (var asset in _backgroundAssets)
+        {
+            var palette = _backgroundPaletteCache.GetValueOrDefault(asset.File.Path,
+                (_scenePalettePrimary, _scenePaletteSecondary));
+            var maskPath = maskPaths.GetValueOrDefault(asset.File.Path, string.Empty);
+            lines.Add($"{(asset.Kind == MediaKind.Video ? 'V' : 'I')}|{asset.File.Path}|{Color(palette.Primary)}|{Color(palette.Secondary)}|{maskPath}");
+        }
+        return string.Join("\n", lines);
+    }
+
+    private async Task LoadAudioAsync(MediaEntry entry)
     {
         _audioPlayer.Pause();
         _audioPlayer.Source = MediaSource.CreateFromStorageFile(entry.File);
+        UseAudioFilenameButton.Visibility = Visibility.Visible;
+        var filename = Path.GetFileNameWithoutExtension(entry.Name);
+        if (string.IsNullOrWhiteSpace(SongTitleBox.Text) ||
+            string.Equals(SongTitleBox.Text, _automaticSongTitle, StringComparison.Ordinal))
+        {
+            _automaticSongTitle = filename;
+            SongTitleBox.Text = filename;
+        }
         if (_gpuInitialized) NvidiaGpuBridge.SetAudioSource(entry.File.Path);
         _audioPlayer.IsLoopingEnabled = _isArticleMode;
         _articleElapsedOffset = 0;
@@ -317,7 +634,17 @@ public sealed partial class MainWindow : Window
         CurrentTimeText.Text = "00:00";
         DurationText.Text = "00:00";
         PlaybackSlider.Value = 0;
-        return Task.CompletedTask;
+        var audioStem = Path.GetFileNameWithoutExtension(entry.Name);
+        var matchingSubtitle = _allAssets.FirstOrDefault(asset => asset.Kind == MediaKind.Subtitle &&
+            (Path.GetExtension(asset.Name).ToLowerInvariant() is ".lrc" or ".srt") &&
+            string.Equals(Path.GetFileNameWithoutExtension(asset.Name), audioStem, StringComparison.OrdinalIgnoreCase));
+        if (matchingSubtitle is not null)
+        {
+            _subtitleAsset = matchingSubtitle;
+            WorkspaceTextText.Text = matchingSubtitle.Name;
+            await LoadSubtitlesAsync(matchingSubtitle);
+        }
+        UpdateIntroText();
     }
 
     private async Task LoadSubtitlesAsync(MediaEntry entry)
@@ -338,8 +665,19 @@ public sealed partial class MainWindow : Window
         _backgroundPlayer.Pause();
         _backgroundPlayer.Source = null;
         _backgroundAsset = null;
+        _backgroundAssets.Clear();
+        _previewPairGeneration++;
+        _requestedPreviewPair = _appliedPreviewPair = string.Empty;
+        _backgroundImageCache.Clear();
+        _backgroundImageCacheOrder.Clear();
+        _subjectMaskCache.Clear();
+        _subjectMaskCacheOrder.Clear();
+        _previewAudioVideoPath = string.Empty;
+        BackgroundVideoAudioToggle.IsEnabled = false;
+        BackgroundVideoVolumeSlider.IsEnabled = false;
         _audioAsset = null;
         _subtitleAsset = null;
+        UseAudioFilenameButton.Visibility = Visibility.Collapsed;
         _cues = [];
         if (_gpuInitialized) NvidiaGpuBridge.SetAudioSource(null);
         _articlePages = [];
@@ -358,7 +696,7 @@ public sealed partial class MainWindow : Window
             VisualizerPanel.Visibility = Visibility.Visible;
         }
         PreviewPlaceholder.Visibility = Visibility.Visible;
-        WorkspaceBackgroundText.Text = "未添加 · 图片 / 视频";
+        UpdateBackgroundSummary();
         WorkspaceAudioText.Text = "未添加 · WAV / MP3 / M4A";
         WorkspaceTextText.Text = "未添加 · LRC / SRT / TXT";
         UpdateLyrics(TimeSpan.Zero);
@@ -374,6 +712,16 @@ public sealed partial class MainWindow : Window
                 _backgroundPlayer.Pause();
                 _backgroundPlayer.Source = null;
                 _backgroundAsset = null;
+                _backgroundAssets.Clear();
+                _previewPairGeneration++;
+                _requestedPreviewPair = _appliedPreviewPair = string.Empty;
+                _backgroundImageCache.Clear();
+                _backgroundImageCacheOrder.Clear();
+                _subjectMaskCache.Clear();
+                _subjectMaskCacheOrder.Clear();
+                _previewAudioVideoPath = string.Empty;
+                BackgroundVideoAudioToggle.IsEnabled = false;
+                BackgroundVideoVolumeSlider.IsEnabled = false;
                 _backgroundPixels = null;
                 BackgroundImage.Source = null;
                 BackgroundImage.Visibility = Visibility.Collapsed;
@@ -384,12 +732,13 @@ public sealed partial class MainWindow : Window
                     NvidiaGpuBridge.StopPreviewBackgroundVideo();
                     NvidiaGpuBridge.ClearBackgroundImage();
                 }
-                WorkspaceBackgroundText.Text = "未添加 · 图片 / 视频";
+                UpdateBackgroundSummary();
                 break;
             case "Audio":
                 _audioPlayer.Pause();
                 _audioPlayer.Source = null;
                 _audioAsset = null;
+                UseAudioFilenameButton.Visibility = Visibility.Collapsed;
                 _articleElapsedOffset = 0;
                 _articleClock.Reset();
                 if (_gpuInitialized) NvidiaGpuBridge.SetAudioSource(null);
@@ -431,7 +780,7 @@ public sealed partial class MainWindow : Window
                 _articleClock.Restart();
             }
             _audioPlayer.Play();
-            if (_backgroundAsset?.Kind == MediaKind.Video) _backgroundPlayer.Play();
+            SyncBackgroundAudioToSong();
             PlayIcon.Glyph = "\uE769";
         }
     }
@@ -451,6 +800,7 @@ public sealed partial class MainWindow : Window
             _updatingSlider = false;
         }
         UpdateLyrics(position);
+        UpdateBackgroundCarouselPreview(position.TotalSeconds);
         RenderVisualizer(position.TotalSeconds, session.Position.TotalSeconds, session.PlaybackState == MediaPlaybackState.Playing);
         if (_isArticleMode && _articleDurationSeconds > 0 && position.TotalSeconds >= _articleDurationSeconds && session.PlaybackState == MediaPlaybackState.Playing)
         {
@@ -476,6 +826,7 @@ public sealed partial class MainWindow : Window
         }
 
         _audioPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(e.NewValue);
+        SyncBackgroundAudioToSong();
     }
 
     private void AudioPlayer_MediaOpened(MediaPlayer sender, object args)
@@ -589,6 +940,7 @@ public sealed partial class MainWindow : Window
         IntroOverlay.VerticalAlignment = VerticalAlignment.Top;
         IntroOverlay.Margin = landscape ? new Thickness(24, 24, 18, 0) : new Thickness(18, 70, 18, 0);
         IntroOverlay.MaxWidth = landscape ? 420 : 320;
+        UpdateIntroText();
         UpdateArticleSettings();
         ApplyLyricsStyle();
     }
@@ -622,15 +974,82 @@ public sealed partial class MainWindow : Window
 
     private void LyricsStyle_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) => ApplyLyricsStyle();
 
+    private void LyricsStyle_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        ApplyLyricsStyle();
+        if (ReferenceEquals(sender, LyricAnimationBox) && _lastLyricIndex is not null)
+            AnimateLyricTransition();
+        if (ReferenceEquals(sender, LyricWindowBox))
+            UpdateLyrics(CurrentTimelinePosition());
+    }
+
+    private void VisualSettings_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) => ApplyAdvancedVisualSettings();
+
+    private void VisualSettings_Toggled(object sender, RoutedEventArgs e) => ApplyAdvancedVisualSettings();
+
+    private void VisualSettings_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyAdvancedVisualSettings();
+
+    private void ApplyAdvancedVisualSettings()
+    {
+        if (!_gpuInitialized || VisualizerPositionSlider is null || AtmospherePresetBox is null) return;
+        var backgroundMotionEnabled = BackgroundMotionStyleBox.SelectedIndex != 3;
+        BackgroundLifeSlider.IsEnabled = backgroundMotionEnabled;
+        BackgroundCameraSlider.IsEnabled = backgroundMotionEnabled;
+        BackgroundAudioWarpSlider.IsEnabled = backgroundMotionEnabled;
+        BackgroundParallaxSlider.IsEnabled = backgroundMotionEnabled;
+        BackgroundLightFlowSlider.IsEnabled = backgroundMotionEnabled;
+        var settings = new[]
+        {
+            (float)VisualizerPositionSlider.Value, (float)VisualizerGlowSlider.Value,
+            (float)VisualizerDensitySlider.Value, (float)VisualizerBrillianceSlider.Value,
+            (float)VisualizerSmoothingSlider.Value, (float)VisualizerIntegrationSlider.Value,
+            (float)VisualizerColorRichnessSlider.Value, (float)VisualizerTrailSlider.Value,
+            0.55f, (float)MusicAwarenessSlider.Value, RainbowToggle.IsOn ? 1.0f : 0.0f, (float)RainbowIntensitySlider.Value,
+            _scenePalettePrimary.X, _scenePalettePrimary.Y, _scenePalettePrimary.Z,
+            _scenePaletteSecondary.X, _scenePaletteSecondary.Y, _scenePaletteSecondary.Z,
+            (float)Math.Clamp(AtmospherePresetBox.SelectedIndex, 0, 16),
+            (float)AtmosphereIntensitySlider.Value, (float)AtmosphereResponseSlider.Value,
+            (float)AtmosphereDensitySlider.Value, (float)AtmosphereWaterlineSlider.Value,
+            1.0f, 0.82f, 0.12f, (float)BackgroundDarknessSlider.Value,
+            (float)OverlayRedSlider.Value, (float)OverlayGreenSlider.Value,
+            (float)OverlayBlueSlider.Value, (float)OverlayOpacitySlider.Value,
+            (float)BackgroundMotionStyleBox.SelectedIndex, (float)BackgroundLifeSlider.Value,
+            (float)BackgroundCameraSlider.Value, (float)BackgroundAudioWarpSlider.Value,
+            (float)BackgroundParallaxSlider.Value, (float)BackgroundLightFlowSlider.Value,
+            (float)SubjectProtectionSlider.Value, SmartCompositionToggle.IsOn ? 1.0f : 0.0f,
+            (float)SubjectEdgeLightSlider.Value, SmartBlurToggle.IsOn ? 1.0f : 0.0f
+        };
+        NvidiaGpuBridge.SetAdvancedVisualSettings(settings, settings.Length);
+        NvidiaGpuBridge.SetAudioSmoothing((float)VisualizerSmoothingSlider.Value);
+    }
+
     private void ApplyLyricsStyle()
     {
-        if (LyricsOverlay is null || LyricFontSizeSlider is null || PreviewFrame is null) return;
+        if (LyricsOverlay is null || LyricFontSizeSlider is null || PreviewFrame is null ||
+            LyricWidthSlider is null || LyricLineSpacingSlider is null || LyricInactiveOpacitySlider is null || LyricAlignmentBox is null) return;
         var size = LyricFontSizeSlider.Value;
         CurrentLyricText.FontSize = size;
         PreviousLyricText.FontSize = size * 0.68;
         NextLyricText.FontSize = size * 0.68;
         Previous2LyricText.FontSize = size * 0.52;
         Next2LyricText.FontSize = size * 0.52;
+        LyricsOverlay.MaxWidth = PreviewFrame.Width * LyricWidthSlider.Value;
+        LyricsOverlay.Spacing = Math.Max(3, size * (LyricLineSpacingSlider.Value - 1) * 0.16);
+        PreviousLyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value, 0.66);
+        NextLyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value, 0.66);
+        Previous2LyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value * 0.88, 0.42);
+        Next2LyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value * 0.88, 0.42);
+        var alignment = LyricAlignmentBox.SelectedIndex switch
+        {
+            0 => TextAlignment.Left,
+            2 => TextAlignment.Right,
+            _ => TextAlignment.Center
+        };
+        Previous2LyricText.TextAlignment = alignment;
+        PreviousLyricText.TextAlignment = alignment;
+        CurrentLyricText.TextAlignment = alignment;
+        NextLyricText.TextAlignment = alignment;
+        Next2LyricText.TextAlignment = alignment;
         LyricsOverlay.RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform
         {
             Y = (LyricPositionSlider.Value - 0.5) * PreviewFrame.Height
@@ -639,40 +1058,107 @@ public sealed partial class MainWindow : Window
 
     private void TemplateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (VisualizerBox is null || VisualizerIntensitySlider is null) return;
-        var (visualizer, intensity) = TemplateBox.SelectedIndex switch
+        if (VisualizerBox is null || VisualizerIntensitySlider is null || BlurSlider is null ||
+            VisualizerPositionSlider is null || LyricFontSizeSlider is null) return;
+        var profile = TemplateBox.SelectedIndex switch
         {
-            0 => (4, 0.62),
-            1 => (5, 0.74),
-            2 => (0, 0.38),
-            3 => (10, 0.52),
-            _ => (1, 0.95)
+            0 => (visualizer: 4, intensity: 0.74, blur: 0.67, darkness: 0.22, position: 0.30, scale: 1.05, glow: 0.88, density: 0.58, color: 0.56, lyricSize: 44.0, lyricY: 0.58, animation: 0, lyricGlow: 0.66, inactive: 0.25, duration: 0.55, awareness: 0.94, smoothing: 0.78, brilliance: 0.68, integration: 0.84, trail: 0.24),
+            1 => (visualizer: 5, intensity: 0.86, blur: 0.58, darkness: 0.22, position: 0.31, scale: 1.08, glow: 0.96, density: 0.86, color: 0.78, lyricSize: 42.0, lyricY: 0.60, animation: 4, lyricGlow: 0.82, inactive: 0.24, duration: 0.52, awareness: 0.96, smoothing: 0.72, brilliance: 0.76, integration: 0.66, trail: 0.30),
+            2 => (visualizer: 0, intensity: 0.56, blur: 0.17, darkness: 0.18, position: 0.22, scale: 0.92, glow: 0.32, density: 0.42, color: 0.32, lyricSize: 38.0, lyricY: 0.56, animation: 1, lyricGlow: 0.28, inactive: 0.34, duration: 0.30, awareness: 0.78, smoothing: 0.82, brilliance: 0.38, integration: 0.88, trail: 0.12),
+            3 => (visualizer: 6, intensity: 0.62, blur: 0.83, darkness: 0.34, position: 0.27, scale: 1.12, glow: 0.82, density: 0.48, color: 0.64, lyricSize: 50.0, lyricY: 0.59, animation: 0, lyricGlow: 0.74, inactive: 0.20, duration: 0.60, awareness: 0.92, smoothing: 0.75, brilliance: 0.70, integration: 0.82, trail: 0.30),
+            _ => (visualizer: 1, intensity: 1.0, blur: 0.33, darkness: 0.20, position: 0.22, scale: 1.02, glow: 0.95, density: 0.82, color: 0.88, lyricSize: 40.0, lyricY: 0.60, animation: 3, lyricGlow: 0.80, inactive: 0.26, duration: 0.28, awareness: 1.0, smoothing: 0.42, brilliance: 0.84, integration: 0.54, trail: 0.32)
         };
-        VisualizerBox.SelectedIndex = visualizer;
-        VisualizerIntensitySlider.Value = intensity;
+        VisualizerBox.SelectedIndex = profile.visualizer;
+        VisualizerIntensitySlider.Value = profile.intensity;
+        BlurSlider.Value = profile.blur;
+        BackgroundDarknessSlider.Value = profile.darkness;
+        VisualizerPositionSlider.Value = profile.position;
+        VisualizerScaleSlider.Value = profile.scale;
+        VisualizerGlowSlider.Value = profile.glow;
+        VisualizerDensitySlider.Value = profile.density;
+        VisualizerColorRichnessSlider.Value = profile.color;
+        MusicAwarenessSlider.Value = profile.awareness;
+        VisualizerSmoothingSlider.Value = profile.smoothing;
+        VisualizerBrillianceSlider.Value = profile.brilliance;
+        VisualizerIntegrationSlider.Value = profile.integration;
+        VisualizerTrailSlider.Value = profile.trail;
+        LyricFontSizeSlider.Value = profile.lyricSize;
+        LyricPositionSlider.Value = profile.lyricY;
+        LyricAnimationBox.SelectedIndex = profile.animation;
+        LyricGlowSlider.Value = profile.lyricGlow;
+        LyricInactiveOpacitySlider.Value = profile.inactive;
+        LyricAnimationDurationSlider.Value = profile.duration;
+        ApplyLyricsStyle();
+        ApplyAdvancedVisualSettings();
     }
 
     private void VideoSettings_Toggled(object sender, RoutedEventArgs e)
     {
-        if (VideoLoopToggle is null || BackgroundVideoAudioToggle is null) return;
+        if (VideoLoopToggle is null || BackgroundVideoAudioToggle is null || BackgroundVideoVolumeSlider is null) return;
         _backgroundPlayer.IsLoopingEnabled = VideoLoopToggle.IsOn;
         _backgroundPlayer.IsMuted = !BackgroundVideoAudioToggle.IsOn;
+        _backgroundPlayer.Volume = BackgroundVideoVolumeSlider.Value;
+        BackgroundVideoVolumeSlider.IsEnabled = _backgroundAssets.Any(asset => asset.Kind == MediaKind.Video) && BackgroundVideoAudioToggle.IsOn;
+        if (_audioPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Playing && _backgroundAssets.Any(asset => asset.Kind == MediaKind.Video))
+        {
+            if (BackgroundVideoAudioToggle.IsOn)
+                SyncBackgroundAudioToSong();
+            else
+            {
+                _backgroundPlayer.Pause();
+                _backgroundAudioPlaying = false;
+            }
+        }
+    }
+
+    private void VideoSettings_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (BackgroundVideoVolumeSlider is not null) _backgroundPlayer.Volume = BackgroundVideoVolumeSlider.Value;
     }
 
     private void IntroSettings_Toggled(object sender, RoutedEventArgs e) => UpdateIntroText();
 
+    private void UseAudioFilenameButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_audioAsset is not null)
+        {
+            _automaticSongTitle = Path.GetFileNameWithoutExtension(_audioAsset.Name);
+            SongTitleBox.Text = _automaticSongTitle;
+        }
+    }
+
+    private void IntroSettings_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        UpdateIntroText();
+    }
+
     private void UpdateIntroText()
     {
-        if (SongTitleBox is null || AuthorNameBox is null || ShowIntroDateToggle is null ||
-            IntroTitleText is null || IntroAuthorText is null || IntroDateText is null) return;
+        if (SongTitleBox is null || AuthorNameBox is null || ShowIntroDateToggle is null || IntroEnabledToggle is null ||
+            IntroTitleText is null || IntroAuthorText is null || IntroDateText is null ||
+            IntroTitleSizeSlider is null || PreviewFrame is null || AspectRatioBox is null) return;
         IntroTitleText.Text = string.IsNullOrWhiteSpace(SongTitleBox.Text) ? "" : SongTitleBox.Text.Trim();
         IntroAuthorText.Text = AuthorNameBox.Text.Trim();
+        var previewWidth = PreviewFrame?.Width ?? 360;
+        var outputWidth = AspectRatioBox?.SelectedIndex == 1 ? 1920.0 : 1080.0;
+        IntroTitleText.FontSize = IntroTitleSizeSlider.Value * previewWidth / outputWidth;
+        IntroAuthorText.FontSize = IntroTitleText.FontSize * 0.46;
+        IntroDateText.FontSize = IntroTitleText.FontSize * 0.30;
         IntroDateText.Visibility = ShowIntroDateToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        SongTitleBox.IsEnabled = IntroEnabledToggle.IsOn;
+        UseAudioFilenameButton.IsEnabled = IntroEnabledToggle.IsOn && _audioAsset is not null;
+        AuthorNameBox.IsEnabled = IntroEnabledToggle.IsOn;
+        ShowIntroDateToggle.IsEnabled = IntroEnabledToggle.IsOn;
+        IntroDurationSlider.IsEnabled = IntroEnabledToggle.IsOn;
+        IntroTitleSizeSlider.IsEnabled = IntroEnabledToggle.IsOn;
+        IntroAnimationDurationSlider.IsEnabled = IntroEnabledToggle.IsOn;
+        IntroAnimationBox.IsEnabled = IntroEnabledToggle.IsOn;
     }
 
     private bool UpdateIntroOverlay(TimeSpan position)
     {
-        var active = _audioAsset is not null && !string.IsNullOrWhiteSpace(SongTitleBox.Text) && position.TotalSeconds < IntroDurationSlider.Value;
+        var active = IntroEnabledToggle.IsOn && _audioAsset is not null &&
+            !string.IsNullOrWhiteSpace(SongTitleBox.Text) && position.TotalSeconds < IntroDurationSlider.Value;
         if (!active)
         {
             IntroOverlay.Visibility = Visibility.Collapsed;
@@ -680,8 +1166,9 @@ public sealed partial class MainWindow : Window
         }
 
         UpdateIntroText();
-        var fadeIn = Math.Clamp(position.TotalSeconds / 0.8, 0, 1);
-        var fadeOut = Math.Clamp((IntroDurationSlider.Value - position.TotalSeconds) / 0.9, 0, 1);
+        var fadeDuration = Math.Max(0.2, IntroAnimationDurationSlider.Value);
+        var fadeIn = Math.Clamp(position.TotalSeconds / fadeDuration, 0, 1);
+        var fadeOut = Math.Clamp((IntroDurationSlider.Value - position.TotalSeconds) / fadeDuration, 0, 1);
         IntroOverlay.Opacity = Math.Min(fadeIn, fadeOut);
         switch (IntroAnimationBox.SelectedIndex)
         {
@@ -770,11 +1257,24 @@ public sealed partial class MainWindow : Window
     {
         var duration = _audioPlayer.PlaybackSession.NaturalDuration.TotalSeconds;
         if (duration > 0) _audioPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(elapsedSeconds % duration);
+        SyncBackgroundAudioToSong();
+    }
+
+    private void SyncBackgroundAudioToSong()
+    {
+        if (_audioAsset is null || _backgroundAssets.Count == 0) return;
+        UpdateBackgroundCarouselPreview(CurrentTimelinePosition().TotalSeconds);
     }
 
     private void AnimateLyricTransition()
     {
-        var duration = new Duration(TimeSpan.FromMilliseconds(480));
+        if (LyricAnimationBox.SelectedIndex == 5)
+        {
+            CurrentLyricText.Opacity = 1;
+            CurrentLyricText.RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform();
+            return;
+        }
+        var duration = new Duration(TimeSpan.FromSeconds(LyricAnimationDurationSlider.Value));
         var story = new Storyboard();
         var fade = new DoubleAnimation { From = 0.20, To = 1, Duration = duration };
         Storyboard.SetTarget(fade, CurrentLyricText);
@@ -826,17 +1326,7 @@ public sealed partial class MainWindow : Window
     private void RenderVisualizer(double visualTime, double audioPosition, bool playing)
     {
         if (!_gpuInitialized || !_gpuPanelAttached || _exportInProgress) return;
-        if (_backgroundAsset?.Kind == MediaKind.Video)
-        {
-            var videoResult = NvidiaGpuBridge.UpdatePreviewBackgroundVideo(_backgroundAsset.File.Path, visualTime, VideoLoopToggle.IsOn ? 1 : 0);
-            if (videoResult < 0)
-            {
-                BackgroundVideo.Visibility = Visibility.Visible;
-                VisualizerPanel.Visibility = Visibility.Collapsed;
-                return;
-            }
-        }
-        else if (BackgroundVideo.Visibility == Visibility.Visible)
+        if (_backgroundAssets.Count == 0 && BackgroundVideo.Visibility == Visibility.Visible)
         {
             BackgroundVideo.Visibility = Visibility.Collapsed;
             VisualizerPanel.Visibility = Visibility.Visible;
@@ -913,6 +1403,25 @@ public sealed partial class MainWindow : Window
             var path = Path.Combine(fontsDirectory, fontName);
             if (File.Exists(path)) PrivateFontRegistrar.TryRegister(path, out _);
         }
+
+        var importedDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SikaMTV", "Fonts");
+        if (!Directory.Exists(importedDirectory)) return;
+        foreach (var path in Directory.EnumerateFiles(importedDirectory)
+                     .Where(path => Path.GetExtension(path).Equals(".ttf", StringComparison.OrdinalIgnoreCase) ||
+                                    Path.GetExtension(path).Equals(".otf", StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!PrivateFontRegistrar.TryRegister(path, out _)) continue;
+            var family = new System.Text.StringBuilder(256);
+            var familyName = NvidiaGpuBridge.GetFontFamily(path, family, family.Capacity) >= 0 && family.Length > 0
+                ? family.ToString()
+                : Path.GetFileNameWithoutExtension(path);
+            FontBox.Items.Add(new ComboBoxItem
+            {
+                Content = $"{familyName}（已导入）",
+                Tag = $"{new Uri(path).AbsoluteUri}#{Uri.EscapeDataString(familyName)}"
+            });
+        }
     }
 
     private void CommitGpuBackground()
@@ -923,6 +1432,8 @@ public sealed partial class MainWindow : Window
         var result = NvidiaGpuBridge.SetBackgroundImage(_backgroundPixels, _backgroundPixelWidth, _backgroundPixelHeight, stride);
         if (result >= 0)
         {
+            if (_backgroundAsset is not null && _backgroundImageCache.TryGetValue(_backgroundAsset.File.Path, out var data))
+                NvidiaGpuBridge.SetSubjectMask(data.SubjectMask, SceneSubjectAnalyzer.MaskSize, SceneSubjectAnalyzer.MaskSize, SceneSubjectAnalyzer.MaskSize, 0);
             BackgroundImage.Visibility = Visibility.Collapsed;
             VisualizerPanel.Visibility = Visibility.Visible;
         }
@@ -1045,22 +1556,41 @@ public sealed partial class MainWindow : Window
             "Square" => (1080u, 1080u),
             _ => (1080u, 1920u)
         };
-        var videoPath = _backgroundAsset.Kind == MediaKind.Video ? _backgroundAsset.File.Path : string.Empty;
+        SetStatus("正在准备背景素材与智能配色…");
+        string backgroundManifest;
+        try
+        {
+            backgroundManifest = await BuildBackgroundManifestAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+        {
+            SetStatus($"准备背景素材失败：{exception.Message}");
+            return;
+        }
         var fontFamily = ExportFontFamily();
         var timeline = BuildExportTimeline();
+        IntroDateText.Text = DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         var result = NvidiaGpuBridge.StartVideoExport(
-            videoPath, _audioAsset.File.Path, destination.Path, timeline,
+            backgroundManifest, _audioAsset.File.Path, destination.Path, timeline,
             SongTitleBox.Text.Trim(), AuthorNameBox.Text.Trim(), IntroDateText.Text, fontFamily,
             audioDuration, outputDuration, width, height,
             (uint)Math.Clamp(VisualizerBox.SelectedIndex, 0, 10),
             (float)VisualizerIntensitySlider.Value, (float)BlurSlider.Value, (float)VignetteSlider.Value,
             (float)SaturationSlider.Value, SlowZoomToggle.IsOn ? 1.0f : 0.0f,
             (float)VisualizerScaleSlider.Value, RainbowToggle.IsOn ? 1.0f : 0.0f,
+            (float)VisualizerSmoothingSlider.Value,
             (float)LyricFontSizeSlider.Value, (float)LyricPositionSlider.Value,
+            (float)LyricWidthSlider.Value, (float)LyricLineSpacingSlider.Value,
+            (float)LyricInactiveOpacitySlider.Value, (float)LyricGlowSlider.Value,
+            (float)LyricAnimationDurationSlider.Value, LyricAlignmentBox.SelectedIndex,
             LyricWindowBox.SelectedIndex == 1 ? 5 : 3, LyricAnimationBox.SelectedIndex,
             _isArticleMode ? 1 : 0, (float)ArticleFontSizeSlider.Value, (float)ArticleLineSpacingSlider.Value,
-            (float)IntroDurationSlider.Value, ShowIntroDateToggle.IsOn ? 1 : 0,
-            IntroAnimationBox.SelectedIndex, VideoLoopToggle.IsOn ? 1 : 0);
+            (float)IntroDurationSlider.Value, (float)IntroTitleSizeSlider.Value,
+            (float)IntroAnimationDurationSlider.Value, IntroEnabledToggle.IsOn ? 1 : 0,
+            ShowIntroDateToggle.IsOn ? 1 : 0,
+            IntroAnimationBox.SelectedIndex, VideoLoopToggle.IsOn ? 1 : 0,
+            BackgroundTransitionBox.SelectedIndex, (float)BackgroundTransitionDurationSlider.Value,
+            BackgroundVideoAudioToggle.IsOn ? 1 : 0, (float)BackgroundVideoVolumeSlider.Value);
         if (result < 0)
         {
             SetStatus($"无法开始视频生成（HRESULT 0x{result:X8}）。");
@@ -1199,6 +1729,7 @@ public sealed partial class MainWindow : Window
             if (result == 0)
             {
                 _gpuInitialized = true;
+                ApplyAdvancedVisualSettings();
                 GpuStatusText.Text = isNvidia == 1 ? $"NVIDIA GPU · {name}" : $"Direct3D GPU · {name}";
                 GpuStatusDot.Fill = isNvidia == 1 ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 118, 207, 155)) : new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 185, 171, 255));
             }
@@ -1220,7 +1751,7 @@ public sealed partial class MainWindow : Window
     private void UpdateGenerateAvailability()
     {
         var hasText = _isArticleMode ? !string.IsNullOrWhiteSpace(ArticleTextBox.Text) : _cues.Count > 0;
-        GenerateButton.IsEnabled = _backgroundAsset is not null && _audioAsset is not null && hasText;
+        GenerateButton.IsEnabled = _backgroundAssets.Count > 0 && _audioAsset is not null && hasText;
     }
 
     private void SetStatus(string message)
@@ -1232,10 +1763,53 @@ public sealed partial class MainWindow : Window
 
     private static readonly string[] SupportedExtensions =
     [
-        ".jpg", ".jpeg", ".png", ".heic", ".mp4", ".mov",
+        ".jpg", ".jpeg", ".png", ".heic", ".mp4", ".mov", ".m4v",
         ".wav", ".mp3", ".m4a", ".aac", ".aiff", ".flac",
         ".lrc", ".srt", ".txt", ".md", ".markdown"
     ];
+}
+
+internal readonly record struct BackgroundPreviewState(
+    int CurrentIndex, int? NextIndex, double CurrentLocalTime, double NextLocalTime,
+    double SegmentDuration, float TransitionProgress, int TransitionKind);
+
+internal static class BackgroundPreviewTimeline
+{
+    internal static BackgroundPreviewState At(double time, double duration, int itemCount,
+        int transition, double transitionDuration, double singleVideoDuration, bool loopSingleVideo)
+    {
+        if (itemCount <= 0) return new BackgroundPreviewState(0, null, 0, 0, 0, 0, 0);
+        if (itemCount == 1 && !loopSingleVideo) singleVideoDuration = 0;
+        if (itemCount == 1 && singleVideoDuration > 0)
+        {
+            var blend = Math.Min(Math.Max(0.2, transitionDuration), singleVideoDuration * 0.25);
+            var cycle = Math.Max(0.001, singleVideoDuration - blend);
+            var safeTime = Math.Max(0, time);
+            var playhead = safeTime < singleVideoDuration
+                ? safeTime
+                : (safeTime - singleVideoDuration) % cycle + blend;
+            if (playhead >= singleVideoDuration - blend)
+            {
+                var nextTime = Math.Max(0, playhead - (singleVideoDuration - blend));
+                return new BackgroundPreviewState(0, 0, playhead, nextTime,
+                    singleVideoDuration, (float)Math.Clamp(nextTime / blend, 0, 1), 1);
+            }
+            return new BackgroundPreviewState(0, null, playhead, 0, singleVideoDuration, 0, 0);
+        }
+
+        if (itemCount == 1 || duration <= 0)
+            return new BackgroundPreviewState(0, null, Math.Max(0, time), 0, Math.Max(duration, 1), 0, 0);
+
+        var segment = duration / itemCount;
+        var clamped = Math.Clamp(time, 0, Math.Max(0, duration - 0.000001));
+        var active = Math.Min(itemCount - 1, (int)(clamped / segment));
+        var local = clamped - active * segment;
+        var blendDuration = Math.Min(Math.Max(0.05, transitionDuration), segment * 0.45);
+        if (transition != 3 && active > 0 && local < blendDuration)
+            return new BackgroundPreviewState(active - 1, active, segment, local,
+                segment, (float)Math.Clamp(local / blendDuration, 0, 1), Math.Clamp(transition + 1, 1, 3));
+        return new BackgroundPreviewState(active, null, local, 0, segment, 0, 0);
+    }
 }
 
 public enum MediaKind { Image, Video, Audio, Subtitle }
@@ -1263,7 +1837,7 @@ public sealed class MediaEntry(StorageFile file, MediaKind kind)
     public static MediaKind? Classify(string extension) => extension.ToLowerInvariant() switch
     {
         ".jpg" or ".jpeg" or ".png" or ".heic" => MediaKind.Image,
-        ".mp4" or ".mov" => MediaKind.Video,
+        ".mp4" or ".mov" or ".m4v" => MediaKind.Video,
         ".wav" or ".mp3" or ".m4a" or ".aac" or ".aiff" or ".flac" => MediaKind.Audio,
         ".lrc" or ".srt" or ".txt" or ".md" or ".markdown" => MediaKind.Subtitle,
         _ => null
@@ -1284,14 +1858,40 @@ internal static class NvidiaGpuBridge
     [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetBackgroundImage", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int SetBackgroundImage([In] byte[] pixels, uint width, uint height, uint stride);
 
+    [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetBackgroundImageSecondary", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int SetBackgroundImageSecondary([In] byte[] pixels, uint width, uint height, uint stride);
+
+    [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetSubjectMask", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int SetSubjectMask([In] byte[] pixels, uint width, uint height, uint stride, int secondary);
+
+    [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetBackgroundTransition", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int SetBackgroundTransition(float progress, int transitionKind);
+
+    [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetBackgroundMotionTimeline", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int SetBackgroundMotionTimeline(float currentProgress, float currentReactivity,
+        float nextProgress, float nextReactivity);
+
+    [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetScenePalette", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int SetScenePalette(float primaryRed, float primaryGreen, float primaryBlue,
+        float secondaryRed, float secondaryGreen, float secondaryBlue);
+
     [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_ClearBackgroundImage", CallingConvention = CallingConvention.Cdecl)]
     internal static extern void ClearBackgroundImage();
+
+    [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetAdvancedVisualSettings", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int SetAdvancedVisualSettings([In] float[] settings, int count);
 
     [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_RenderVisualizer", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int Render(float timeSeconds, uint visualizerKind, float intensity, float blur, float vignette, float saturation, float slowZoom, float visualizerScale, float rainbow, [In] float[] bands, int bandCount);
 
     [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_UpdatePreviewBackgroundVideo", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
     internal static extern int UpdatePreviewBackgroundVideo([MarshalAs(UnmanagedType.LPWStr)] string path, double timeSeconds, int loop);
+
+    [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_UpdatePreviewBackgroundCarousel", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    internal static extern int UpdatePreviewBackgroundCarousel(
+        [MarshalAs(UnmanagedType.LPWStr)] string primaryVideoPath, double primaryTime,
+        [MarshalAs(UnmanagedType.LPWStr)] string secondaryVideoPath, double secondaryTime,
+        int loop, float transitionProgress, int transitionKind);
 
     [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_StopPreviewBackgroundVideo", CallingConvention = CallingConvention.Cdecl)]
     internal static extern void StopPreviewBackgroundVideo();
@@ -1318,17 +1918,31 @@ internal static class NvidiaGpuBridge
         float slowZoom,
         float visualizerScale,
         float rainbow,
+        float visualizerSmoothing,
         float lyricFontSize,
         float lyricPosition,
+        float lyricWidth,
+        float lyricLineSpacing,
+        float lyricInactiveOpacity,
+        float lyricGlow,
+        float lyricAnimationDuration,
+        int lyricAlignment,
         int lyricWindowCount,
         int lyricAnimation,
         int articleMode,
         float articleFontSize,
         float articleLineSpacing,
         float introDuration,
+        float introTitleSize,
+        float introAnimationDuration,
+        int introEnabled,
         int showIntroDate,
         int introAnimation,
-        int loopBackgroundVideo);
+        int loopBackgroundVideo,
+        int backgroundTransition,
+        float backgroundTransitionDuration,
+        int backgroundAudioEnabled,
+        float backgroundAudioVolume);
 
     [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_GetVideoExportProgress", CallingConvention = CallingConvention.Cdecl)]
     internal static extern void GetVideoExportProgress(out float progress, out int isRunning, out int result);
@@ -1341,6 +1955,9 @@ internal static class NvidiaGpuBridge
 
     [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetAudioPlaybackState", CallingConvention = CallingConvention.Cdecl)]
     internal static extern void SetAudioPlaybackState(double positionSeconds, int isPlaying);
+
+    [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_SetAudioSmoothing", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void SetAudioSmoothing(float amount);
 
     [DllImport("SikaMTV.Gpu.dll", EntryPoint = "SikaMTV_CopyAudioBands", CallingConvention = CallingConvention.Cdecl)]
     internal static extern void CopyAudioBands([Out] float[] bands, int capacity);

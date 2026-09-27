@@ -31,7 +31,7 @@ public enum VisualizerKind
     Aurora,
     Prism,
     Nebula,
-    Flower,
+    Kaleidoscope,
     Starfield,
     Border
 }
