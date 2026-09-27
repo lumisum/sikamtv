@@ -49,6 +49,7 @@ public sealed partial class MainWindow : Window
     private readonly Microsoft.UI.Xaml.Media.ScaleTransform _lyricScale = new();
     private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _lyricWhiteBrush = new(Windows.UI.Color.FromArgb(255, 255, 255, 255));
     private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _lyricAccentBrush = new(Windows.UI.Color.FromArgb(255, 197, 176, 255));
+    private readonly Dictionary<TextBlock, DropShadow> _textShadows = [];
     private IReadOnlyList<SubtitleCue> _cues = [];
     private IReadOnlyList<string> _articlePages = [];
     private IReadOnlyList<ArticlePageTiming> _articleTimings = [];
@@ -1050,7 +1051,7 @@ public sealed partial class MainWindow : Window
         var lyricGlow = (float)LyricGlowSlider.Value;
         foreach (var text in LyricTextElements())
         {
-            if (text.Shadow is not DropShadow shadow) continue;
+            if (!_textShadows.TryGetValue(text, out var shadow)) continue;
             shadow.Opacity = lyricGlow * 0.20f;
             shadow.BlurRadius = (float)Math.Max(0.35, lyricGlow / outputScale);
         }
@@ -1232,7 +1233,8 @@ public sealed partial class MainWindow : Window
             shadow.Offset = Vector3.Zero;
             shadow.Opacity = lyricTexts.Contains(text) ? 0 : 0.20f;
             shadow.BlurRadius = lyricTexts.Contains(text) ? 0 : 0.5f;
-            text.Shadow = shadow;
+            ElementCompositionPreview.GetElementVisual(text).Shadow = shadow;
+            _textShadows[text] = shadow;
         }
     }
 
@@ -1330,7 +1332,7 @@ public sealed partial class MainWindow : Window
         {
             CurrentLyricText.Foreground = _lyricWhiteBrush;
         }
-        if (CurrentLyricText.Shadow is DropShadow lyricShadow)
+        if (_textShadows.TryGetValue(CurrentLyricText, out var lyricShadow))
             lyricShadow.Color = animation == 4 ? _lyricAccentBrush.Color : _lyricWhiteBrush.Color;
 
         if (animation == 0)
