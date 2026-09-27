@@ -963,12 +963,28 @@ namespace
         const bool landscape = request.width > request.height;
         const bool square = !landscape && request.width == request.height;
         const float scale = landscape ? request.width / 640.0f : square ? request.width / 580.0f : request.height / 640.0f;
-        const float textMargin = landscape ? 0.258f : square ? 0.233f : 0.07f;
-        const auto marginX = static_cast<LONG>(request.width * textMargin);
         const auto lyricWidth = static_cast<LONG>(request.width * std::clamp(request.lyricWidth, 0.45f, 0.96f));
         const auto lyricMarginX = static_cast<LONG>((request.width - lyricWidth) / 2);
         const LONG textWidth = lyricWidth;
         const int cueIndex = CurrentCueIndex(cues, seconds);
+        const auto compositeAccentLine = [frame, &request](LONG left, LONG top, LONG width, LONG height, float opacity)
+        {
+            const auto alpha = static_cast<unsigned>(std::clamp(std::lround(opacity * 255.0f), 0l, 255l));
+            if (!frame || alpha == 0 || width <= 0 || height <= 0) return;
+            const LONG right = std::clamp<LONG>(left + width, 0, static_cast<LONG>(request.width));
+            const LONG bottom = std::clamp<LONG>(top + height, 0, static_cast<LONG>(request.height));
+            left = std::clamp<LONG>(left, 0, static_cast<LONG>(request.width));
+            top = std::clamp<LONG>(top, 0, static_cast<LONG>(request.height));
+            for (LONG y = top; y < bottom; ++y)
+            for (LONG x = left; x < right; ++x)
+            {
+                auto* pixel = frame + (static_cast<size_t>(y) * request.width + static_cast<size_t>(x)) * 4;
+                const auto inverse = 255 - alpha;
+                pixel[0] = static_cast<unsigned char>((pixel[0] * inverse + 255 * alpha + 127) / 255);
+                pixel[1] = static_cast<unsigned char>((pixel[1] * inverse + 156 * alpha + 127) / 255);
+                pixel[2] = static_cast<unsigned char>((pixel[2] * inverse + 182 * alpha + 127) / 255);
+            }
+        };
 
         if (request.introEnabled && !request.title.empty() && seconds < request.introDuration && request.introDuration > 0)
         {
@@ -979,30 +995,41 @@ namespace
             if (opacity > 0)
             {
                 const float introScale = request.introAnimation == 2 ? 0.97f + fadeIn * 0.03f : 1.0f;
-                const LONG top = static_cast<LONG>(request.height * (landscape ? 0.07 : 0.12) +
-                    (request.introAnimation == 0 ? (1.0f - fadeIn) * request.height * 0.018f : 0));
-                const LONG left = landscape ? static_cast<LONG>(request.width * 0.06) : marginX;
-                const UINT alignment = landscape ? DT_LEFT : DT_CENTER;
-                const auto titleDimension = landscape ? request.width : request.height;
+                const float outputScale = landscape ? request.width / 640.0f : square ? request.width / 580.0f : request.height / 640.0f;
+                const LONG columnWidth = static_cast<LONG>(std::lround((landscape ? 420.0f : 320.0f) * outputScale));
+                const LONG left = landscape
+                    ? static_cast<LONG>(std::lround(24.0f * outputScale))
+                    : std::max<LONG>(0, (static_cast<LONG>(request.width) - columnWidth) / 2);
+                const LONG right = std::min<LONG>(static_cast<LONG>(request.width), left + columnWidth);
+                const LONG top = static_cast<LONG>(std::lround((landscape ? 24.0f : 70.0f) * outputScale +
+                    (request.introAnimation == 0 ? (1.0f - fadeIn) * 12.0f * outputScale : 0)));
+                const UINT alignment = DT_CENTER;
                 const auto titleSize = std::max(1, static_cast<int>(std::lround(request.introTitleSize * introScale)));
                 const auto authorSize = std::max(1, static_cast<int>(std::lround(titleSize * 0.46f)));
                 const auto dateSize = std::max(1, static_cast<int>(std::lround(titleSize * 0.30f)));
                 LONG cursor = top;
-                RECT titleRect{ left, cursor, static_cast<LONG>(request.width) - left, cursor + titleSize * 2 + 20 };
-                auto area = surface.DrawMask(request.title, request.fontFamily, titleSize, FW_SEMIBOLD, titleRect, alignment | DT_VCENTER);
+                const auto titleHeight = surface.MeasureTextHeight(request.title, request.fontFamily, titleSize, FW_SEMIBOLD, right - left);
+                RECT titleRect{ left, cursor, right, cursor + titleHeight };
+                auto area = surface.DrawMask(request.title, request.fontFamily, titleSize, FW_SEMIBOLD, titleRect, alignment);
                 surface.Composite(frame, area, opacity, RGB(255, 252, 246), true);
-                cursor = titleRect.bottom + static_cast<LONG>(request.height * 0.012f);
+                cursor = titleRect.bottom + static_cast<LONG>(std::lround(10.0f * outputScale));
+                const LONG accentWidth = static_cast<LONG>(std::lround(58.0f * outputScale));
+                const LONG accentHeight = std::max<LONG>(1, static_cast<LONG>(std::lround(outputScale)));
+                compositeAccentLine(left + (right - left - accentWidth) / 2, cursor, accentWidth, accentHeight, opacity * 0.80f);
+                cursor += accentHeight + static_cast<LONG>(std::lround(10.0f * outputScale));
                 if (!request.author.empty())
                 {
-                    RECT authorRect{ left, cursor, static_cast<LONG>(request.width) - left, cursor + authorSize * 2 };
-                    area = surface.DrawMask(request.author, request.fontFamily, authorSize, FW_NORMAL, authorRect, alignment | DT_VCENTER);
+                    const auto authorHeight = surface.MeasureTextHeight(request.author, request.fontFamily, authorSize, FW_NORMAL, right - left);
+                    RECT authorRect{ left, cursor, right, cursor + authorHeight };
+                    area = surface.DrawMask(request.author, request.fontFamily, authorSize, FW_NORMAL, authorRect, alignment);
                     surface.Composite(frame, area, opacity * 0.88f, RGB(237, 231, 222), true);
-                    cursor = authorRect.bottom + static_cast<LONG>(request.height * 0.009f);
+                    cursor = authorRect.bottom + static_cast<LONG>(std::lround(10.0f * outputScale));
                 }
                 if (request.showIntroDate && !request.date.empty())
                 {
-                    RECT dateRect{ left, cursor, static_cast<LONG>(request.width) - left, cursor + dateSize * 2 };
-                    area = surface.DrawMask(request.date, request.fontFamily, dateSize, FW_NORMAL, dateRect, alignment | DT_VCENTER);
+                    const auto dateHeight = surface.MeasureTextHeight(request.date, request.fontFamily, dateSize, FW_NORMAL, right - left);
+                    RECT dateRect{ left, cursor, right, cursor + dateHeight };
+                    area = surface.DrawMask(request.date, request.fontFamily, dateSize, FW_NORMAL, dateRect, alignment);
                     surface.Composite(frame, area, opacity * 0.68f, RGB(219, 214, 207), true);
                 }
             }
@@ -1041,7 +1068,7 @@ namespace
             };
             std::vector<LyricRow> rows;
             float blockHeight = 0;
-            float rowGap = request.lyricFontSize * scale * std::clamp(request.lyricLineSpacing - 1.0f, 0.10f, 1.50f) * 0.18f;
+            float rowGap = request.lyricFontSize * scale * std::clamp(request.lyricLineSpacing - 1.0f, 0.10f, 1.50f) * 0.16f;
             for (int offset = firstOffset; offset <= lastOffset; ++offset)
             {
                 const auto index = cueIndex + offset;
@@ -1050,7 +1077,7 @@ namespace
                 float animationScale = 1;
                 if (offset == 0 && request.lyricAnimation == 2) animationScale = 0.93f + transition * 0.07f;
                 if (offset == 0 && request.lyricAnimation == 4) animationScale = 0.84f + transition * 0.16f;
-                const auto fontSize = std::max(1, static_cast<int>(std::lround(request.lyricFontSize * scale * 0.78f * relative * animationScale)));
+                const auto fontSize = std::max(1, static_cast<int>(std::lround(request.lyricFontSize * scale * relative * animationScale)));
                 const auto rowHeight = surface.MeasureTextHeight(cues[static_cast<size_t>(index)].text,
                     request.fontFamily, fontSize, offset == 0 ? FW_SEMIBOLD : FW_NORMAL, textWidth);
                 rows.push_back({ index, fontSize, rowHeight, offset });

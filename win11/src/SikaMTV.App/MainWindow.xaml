@@ -142,10 +142,10 @@
                         <TextBlock x:Name="Next2LyricText" FontSize="12" Opacity="0.32" TextAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
                     <StackPanel x:Name="IntroOverlay" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="18,70,18,0" Spacing="10" MaxWidth="320" IsHitTestVisible="False" Visibility="Collapsed">
-                        <TextBlock x:Name="IntroTitleText" Text="" FontSize="24" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
+                        <TextBlock x:Name="IntroTitleText" Text="" FontSize="24" FontWeight="SemiBold" Foreground="#FFFCF6" TextAlignment="Center" TextWrapping="Wrap" />
                         <Rectangle Height="1" Width="58" Fill="{StaticResource SikaAccent}" HorizontalAlignment="Center" Opacity="0.8" />
-                        <TextBlock x:Name="IntroAuthorText" Text="鹿鸣松(Lumisum)" FontSize="15" TextAlignment="Center" />
-                        <TextBlock x:Name="IntroDateText" FontSize="11" Foreground="{StaticResource SikaMuted}" TextAlignment="Center" />
+                        <TextBlock x:Name="IntroAuthorText" Text="鹿鸣松(Lumisum)" FontSize="15" Foreground="#EDE7DE" Opacity="0.88" TextAlignment="Center" />
+                        <TextBlock x:Name="IntroDateText" FontSize="11" Foreground="#DBD6CF" Opacity="0.68" TextAlignment="Center" />
                     </StackPanel>
                     <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="14" Background="#8A11131B" CornerRadius="10" Padding="9,5">
                         <TextBlock x:Name="PreviewModeText" Text="歌词视频 · Ethereal" FontSize="10" />

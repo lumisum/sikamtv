@@ -1,9 +1,10 @@
 using Microsoft.UI;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -44,6 +45,10 @@ public sealed partial class MainWindow : Window
     private readonly Microsoft.UI.Xaml.Media.TranslateTransform _introTranslate = new();
     private readonly Microsoft.UI.Xaml.Media.TranslateTransform _introStatic = new();
     private readonly Microsoft.UI.Xaml.Media.ScaleTransform _introScale = new();
+    private readonly Microsoft.UI.Xaml.Media.TranslateTransform _lyricTranslate = new();
+    private readonly Microsoft.UI.Xaml.Media.ScaleTransform _lyricScale = new();
+    private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _lyricWhiteBrush = new(Windows.UI.Color.FromArgb(255, 255, 255, 255));
+    private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _lyricAccentBrush = new(Windows.UI.Color.FromArgb(255, 197, 176, 255));
     private IReadOnlyList<SubtitleCue> _cues = [];
     private IReadOnlyList<string> _articlePages = [];
     private IReadOnlyList<ArticlePageTiming> _articleTimings = [];
@@ -63,7 +68,6 @@ public sealed partial class MainWindow : Window
     private byte[]? _backgroundPixels;
     private uint _backgroundPixelWidth;
     private uint _backgroundPixelHeight;
-    private int? _lastLyricIndex;
     private string _requestedPreviewPair = string.Empty;
     private string _appliedPreviewPair = string.Empty;
     private string _previewAudioVideoPath = string.Empty;
@@ -77,6 +81,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        InitializeTextShadows();
         IntroOverlay.RenderTransform = _introTranslate;
         AssetsList.ItemsSource = _assets;
         _audioPlayer.MediaOpened += AudioPlayer_MediaOpened;
@@ -868,7 +873,10 @@ public sealed partial class MainWindow : Window
             pageIndex = Math.Clamp(pageIndex, 0, Math.Max(0, _articlePages.Count - 1));
             CurrentLyricText.Text = _articlePages.Count == 0 ? string.Empty : _articlePages[pageIndex];
             CurrentLyricText.FontSize = ArticleFontSizeSlider.Value;
-            CurrentLyricText.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily(_selectedFontFamily);
+            CurrentLyricText.Opacity = 1;
+            CurrentLyricText.Foreground = _lyricWhiteBrush;
+            _lyricTranslate.Y = 0;
+            CurrentLyricText.RenderTransform = _lyricTranslate;
             LyricsOverlay.Spacing = Math.Max(8, ArticleLineSpacingSlider.Value * 8);
             PreviousLyricText.Text = string.Empty;
             Previous2LyricText.Text = string.Empty;
@@ -884,7 +892,6 @@ public sealed partial class MainWindow : Window
         Next2LyricText.Visibility = showFive ? Visibility.Visible : Visibility.Collapsed;
         if (current is null)
         {
-            _lastLyricIndex = null;
             Previous2LyricText.Text = string.Empty;
             PreviousLyricText.Text = string.Empty;
             CurrentLyricText.Text = string.Empty;
@@ -900,9 +907,7 @@ public sealed partial class MainWindow : Window
         CurrentLyricText.Text = _cues[index].Text;
         NextLyricText.Text = index + 1 < _cues.Count ? _cues[index + 1].Text : string.Empty;
         Next2LyricText.Text = showFive && index + 2 < _cues.Count ? _cues[index + 2].Text : string.Empty;
-        CurrentLyricText.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily(_selectedFontFamily);
-        if (_lastLyricIndex != index) AnimateLyricTransition();
-        _lastLyricIndex = index;
+        ApplyLyricTransitionFrame(_cues[index].Start.TotalSeconds, position.TotalSeconds);
         LyricsOverlay.Visibility = Visibility.Visible;
     }
 
@@ -978,9 +983,9 @@ public sealed partial class MainWindow : Window
     private void LyricsStyle_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         ApplyLyricsStyle();
-        if (ReferenceEquals(sender, LyricAnimationBox) && _lastLyricIndex is not null)
-            AnimateLyricTransition();
         if (ReferenceEquals(sender, LyricWindowBox))
+            UpdateLyrics(CurrentTimelinePosition());
+        else if (ReferenceEquals(sender, LyricAnimationBox))
             UpdateLyrics(CurrentTimelinePosition());
     }
 
@@ -1027,7 +1032,7 @@ public sealed partial class MainWindow : Window
     private void ApplyLyricsStyle()
     {
         if (LyricsOverlay is null || LyricFontSizeSlider is null || PreviewFrame is null ||
-            LyricWidthSlider is null || LyricLineSpacingSlider is null || LyricInactiveOpacitySlider is null || LyricAlignmentBox is null) return;
+            LyricWidthSlider is null || LyricLineSpacingSlider is null || LyricInactiveOpacitySlider is null || LyricAlignmentBox is null || LyricGlowSlider is null) return;
         var size = LyricFontSizeSlider.Value;
         CurrentLyricText.FontSize = size;
         PreviousLyricText.FontSize = size * 0.68;
@@ -1040,6 +1045,15 @@ public sealed partial class MainWindow : Window
         NextLyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value, 0.66);
         Previous2LyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value * 0.88, 0.42);
         Next2LyricText.Opacity = Math.Max(LyricInactiveOpacitySlider.Value * 0.88, 0.42);
+        var outputScale = PreviewFrame.Width > PreviewFrame.Height ? 3.0 :
+            Math.Abs(PreviewFrame.Width - PreviewFrame.Height) < 1 ? 1080.0 / 580.0 : 3.0;
+        var lyricGlow = (float)LyricGlowSlider.Value;
+        foreach (var text in LyricTextElements())
+        {
+            if (text.Shadow is not DropShadow shadow) continue;
+            shadow.Opacity = lyricGlow * 0.20f;
+            shadow.BlurRadius = (float)Math.Max(0.35, lyricGlow / outputScale);
+        }
         var alignment = LyricAlignmentBox.SelectedIndex switch
         {
             0 => TextAlignment.Left,
@@ -1168,8 +1182,8 @@ public sealed partial class MainWindow : Window
 
         UpdateIntroText();
         var fadeDuration = Math.Max(0.2, IntroAnimationDurationSlider.Value);
-        var fadeIn = Math.Clamp(position.TotalSeconds / fadeDuration, 0, 1);
-        var fadeOut = Math.Clamp((IntroDurationSlider.Value - position.TotalSeconds) / fadeDuration, 0, 1);
+        var fadeIn = SmoothTransition(position.TotalSeconds / fadeDuration);
+        var fadeOut = SmoothTransition((IntroDurationSlider.Value - position.TotalSeconds) / fadeDuration);
         IntroOverlay.Opacity = Math.Min(fadeIn, fadeOut);
         switch (IntroAnimationBox.SelectedIndex)
         {
@@ -1195,8 +1209,35 @@ public sealed partial class MainWindow : Window
     {
         if (FontBox?.SelectedItem is not ComboBoxItem item) return;
         _selectedFontFamily = item.Tag?.ToString() ?? item.Content?.ToString() ?? "Segoe UI";
-        CurrentLyricText.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily(_selectedFontFamily);
+        var font = new Microsoft.UI.Xaml.Media.FontFamily(_selectedFontFamily);
+        Previous2LyricText.FontFamily = font;
+        PreviousLyricText.FontFamily = font;
+        CurrentLyricText.FontFamily = font;
+        NextLyricText.FontFamily = font;
+        Next2LyricText.FontFamily = font;
+        IntroTitleText.FontFamily = font;
+        IntroAuthorText.FontFamily = font;
+        IntroDateText.FontFamily = font;
     }
+
+    private void InitializeTextShadows()
+    {
+        var compositor = ElementCompositionPreview.GetElementVisual(CurrentLyricText).Compositor;
+        var lyricTexts = LyricTextElements();
+        foreach (var text in lyricTexts.Concat([IntroTitleText, IntroAuthorText, IntroDateText]))
+        {
+            var shadow = compositor.CreateDropShadow();
+            shadow.SourcePolicy = CompositionDropShadowSourcePolicy.InheritFromVisualContent;
+            shadow.Color = Windows.UI.Color.FromArgb(255, 255, 255, 255);
+            shadow.Offset = Vector3.Zero;
+            shadow.Opacity = lyricTexts.Contains(text) ? 0 : 0.20f;
+            shadow.BlurRadius = lyricTexts.Contains(text) ? 0 : 0.5f;
+            text.Shadow = shadow;
+        }
+    }
+
+    private TextBlock[] LyricTextElements() =>
+        [Previous2LyricText, PreviousLyricText, CurrentLyricText, NextLyricText, Next2LyricText];
 
     private void UpdateArticleSettings()
     {
@@ -1267,61 +1308,55 @@ public sealed partial class MainWindow : Window
         UpdateBackgroundCarouselPreview(CurrentTimelinePosition().TotalSeconds);
     }
 
-    private void AnimateLyricTransition()
+    private void ApplyLyricTransitionFrame(double cueStartSeconds, double currentSeconds)
     {
-        if (LyricAnimationBox.SelectedIndex == 5)
+        var duration = Math.Max(0.18, LyricAnimationDurationSlider.Value);
+        var progress = Math.Clamp((currentSeconds - cueStartSeconds) / duration, 0, 1);
+        var eased = SmoothTransition(progress);
+        var animation = LyricAnimationBox.SelectedIndex;
+        CurrentLyricText.Opacity = animation switch
         {
-            CurrentLyricText.Opacity = 1;
-            CurrentLyricText.RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform();
-            return;
+            1 or 3 => eased,
+            5 => 1,
+            _ => 0.22 + eased * 0.78
+        };
+        if (animation == 4)
+        {
+            var color = Windows.UI.Color.FromArgb(255, (byte)Math.Round(197 + 58 * eased), (byte)Math.Round(176 + 79 * eased), 255);
+            if (_lyricAccentBrush.Color != color) _lyricAccentBrush.Color = color;
+            CurrentLyricText.Foreground = _lyricAccentBrush;
         }
-        var duration = new Duration(TimeSpan.FromSeconds(LyricAnimationDurationSlider.Value));
-        var story = new Storyboard();
-        var fade = new DoubleAnimation { From = 0.20, To = 1, Duration = duration };
-        Storyboard.SetTarget(fade, CurrentLyricText);
-        Storyboard.SetTargetProperty(fade, "Opacity");
-        story.Children.Add(fade);
+        else
+        {
+            CurrentLyricText.Foreground = _lyricWhiteBrush;
+        }
+        if (CurrentLyricText.Shadow is DropShadow lyricShadow)
+            lyricShadow.Color = animation == 4 ? _lyricAccentBrush.Color : _lyricWhiteBrush.Color;
 
-        if (LyricAnimationBox.SelectedIndex == 0)
+        if (animation == 0)
         {
-            CurrentLyricText.RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform();
-            AddTransformAnimation(story, "(UIElement.RenderTransform).(TranslateTransform.Y)", 16, 0, duration);
+            _lyricTranslate.Y = (1 - eased) * 16;
+            CurrentLyricText.RenderTransform = _lyricTranslate;
         }
-        else if (LyricAnimationBox.SelectedIndex is 2 or 3 or 4)
+        else if (animation is 2 or 4)
         {
-            var start = LyricAnimationBox.SelectedIndex == 4 ? 0.84 : 0.93;
-            CurrentLyricText.RenderTransform = new Microsoft.UI.Xaml.Media.ScaleTransform { CenterX = CurrentLyricText.ActualWidth / 2, CenterY = CurrentLyricText.ActualHeight / 2 };
-            AddTransformAnimation(story, "(UIElement.RenderTransform).(ScaleTransform.ScaleX)", start, 1, duration);
-            AddTransformAnimation(story, "(UIElement.RenderTransform).(ScaleTransform.ScaleY)", start, 1, duration);
-            if (LyricAnimationBox.SelectedIndex == 4)
-            {
-                CurrentLyricText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 197, 176, 255));
-                var color = new ColorAnimation
-                {
-                    From = Windows.UI.Color.FromArgb(255, 197, 176, 255),
-                    To = Windows.UI.Color.FromArgb(255, 255, 255, 255),
-                    Duration = duration
-                };
-                Storyboard.SetTarget(color, CurrentLyricText.Foreground);
-                Storyboard.SetTargetProperty(color, "Color");
-                story.Children.Add(color);
-            }
+            var start = animation == 4 ? 0.84 : 0.93;
+            _lyricScale.CenterX = CurrentLyricText.ActualWidth / 2;
+            _lyricScale.CenterY = CurrentLyricText.ActualHeight / 2;
+            _lyricScale.ScaleX = _lyricScale.ScaleY = start + (1 - start) * eased;
+            CurrentLyricText.RenderTransform = _lyricScale;
         }
-        story.Begin();
+        else
+        {
+            _lyricTranslate.Y = 0;
+            CurrentLyricText.RenderTransform = _lyricTranslate;
+        }
     }
 
-    private void AddTransformAnimation(Storyboard storyboard, string property, double from, double to, Duration duration)
+    private static double SmoothTransition(double value)
     {
-        var animation = new DoubleAnimation
-        {
-            From = from,
-            To = to,
-            Duration = duration,
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-        };
-        Storyboard.SetTarget(animation, CurrentLyricText);
-        Storyboard.SetTargetProperty(animation, property);
-        storyboard.Children.Add(animation);
+        var progress = Math.Clamp(value, 0, 1);
+        return progress * progress * (3 - 2 * progress);
     }
 
     private void RenderVisualizer(double visualTime, double audioPosition, bool playing)
