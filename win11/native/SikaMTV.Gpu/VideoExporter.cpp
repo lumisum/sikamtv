@@ -13,6 +13,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
@@ -1200,7 +1201,7 @@ namespace
             double outgoingLocalTime = state.currentLocalTime;
             if (state.nextIndex && *state.nextIndex != state.currentIndex && media.size() > 1)
             {
-                const auto blend = std::min(std::max(0.05, request.backgroundTransitionDuration), state.segmentDuration * 0.45);
+                const auto blend = std::min(std::max(0.05, static_cast<double>(request.backgroundTransitionDuration)), state.segmentDuration * 0.45);
                 outgoingLocalTime = std::max(0.0, state.segmentDuration - blend + progress * blend);
             }
             addClip(state.currentIndex, outgoingLocalTime, 1.0f - progress);
