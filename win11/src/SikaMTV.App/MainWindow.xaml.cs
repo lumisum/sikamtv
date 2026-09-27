@@ -500,7 +500,8 @@ public sealed partial class MainWindow : Window
         }
         if (!string.Equals(pairKey, _appliedPreviewPair, StringComparison.Ordinal)) return;
 
-        var paletteA = _backgroundPaletteCache.GetValueOrDefault(current.File.Path, (_scenePalettePrimary, _scenePaletteSecondary));
+        var paletteA = _backgroundPaletteCache.GetValueOrDefault(current.File.Path,
+            (Primary: _scenePalettePrimary, Secondary: _scenePaletteSecondary));
         var paletteB = next is null ? paletteA : _backgroundPaletteCache.GetValueOrDefault(next.File.Path, paletteA);
         var paletteMix = state.NextIndex.HasValue ? state.TransitionProgress : 0;
         var primaryPalette = Vector3.Lerp(paletteA.Primary, paletteB.Primary, paletteMix);
@@ -608,7 +609,7 @@ public sealed partial class MainWindow : Window
         foreach (var asset in _backgroundAssets)
         {
             var palette = _backgroundPaletteCache.GetValueOrDefault(asset.File.Path,
-                (_scenePalettePrimary, _scenePaletteSecondary));
+                (Primary: _scenePalettePrimary, Secondary: _scenePaletteSecondary));
             var maskPath = maskPaths.GetValueOrDefault(asset.File.Path, string.Empty);
             lines.Add($"{(asset.Kind == MediaKind.Video ? 'V' : 'I')}|{asset.File.Path}|{Color(palette.Primary)}|{Color(palette.Secondary)}|{maskPath}");
         }
